@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Checkmk special agent for monitoring AWS CloudWatch metrics.
+
+This script monitors CloudWatch metrics across multiple AWS regions using the
+cost-free GetMetricStatistics API (1M free requests/month).
+
+Usage:
+    python3 agent_aws_cloudwatch --access-key AKIA... --secret-key ... \
+        --cloudwatch-regions-map '{"us-east-1": ["cloudfront"], "eu-central-1": ["dynamodb"]}'
+
+Options:
+    --access-key                AWS Access Key ID
+    --secret-key                AWS Secret Access Key
+    --cloudwatch-regions-map    JSON mapping of regions to services
+    --cloudwatch-cache-ttl      Metrics cache TTL in seconds (default: 300)
+    --cloudwatch-discovery-ttl  Resource discovery cache TTL in seconds (default: 3600)
+    --cloudwatch-api-warn       Warning threshold for API usage (default: 80.0)
+    --cloudwatch-api-crit       Critical threshold for API usage (default: 90.0)
+    --force-refresh             Ignore all caches and fetch fresh data from AWS API
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import setproctitle
+
+# Add the lib directory to the Python path for imports
+# This handles both development and installed (MKP) scenarios
+_script_dir = Path(__file__).parent
+_lib_dir = _script_dir.parent / "lib"
+if _lib_dir.exists():
+    sys.path.insert(0, str(_script_dir.parent))
+
+# Try importing from the lib module
+try:
+    from lib.orchestrator import CloudWatchOrchestrator
+except ImportError:
+    # Fallback: Try importing from local package (for OMD installations)
+    try:
+        from cmk_addons.plugins.aws_cloudwatch.lib.orchestrator import (
+            CloudWatchOrchestrator,
+        )
+    except ImportError as e:
+        print(f"ERROR: Could not import CloudWatch library: {e}", file=sys.stderr)
+        print("<<<aws_cloudwatch:sep(0)>>>")
+        print(
+            json.dumps(
+                {
+                    "CloudWatchMetrics": {},
+                    "CloudWatchAPICounter": {"error": "Import failed"},
+                    "CloudWatchAPIConfig": {},
+                }
+            )
+        )
+        sys.exit(1)
+
+
+def parse_arguments() -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Returns:
+        Parsed arguments namespace
+    """
+    parser = argparse.ArgumentParser(
+        description="Monitors AWS CloudWatch metrics using the free GetMetricStatistics API.",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--access-key",
+        required=True,
+        help="AWS Access Key ID",
+    )
+    parser.add_argument(
+        "--secret-key",
+        required=True,
+        help="AWS Secret Access Key",
+    )
+    parser.add_argument(
+        "--cloudwatch-regions-map",
+        type=str,
+        default="{}",
+        help='JSON mapping of regions to services.\nExample: \'{"us-east-1": ["cloudfront", "ec2"]}\'',
+    )
+    parser.add_argument(
+        "--cloudwatch-cache-ttl",
+        type=int,
+        default=300,
+        help="Metrics cache TTL in seconds (default: 300)",
+    )
+    parser.add_argument(
+        "--cloudwatch-discovery-ttl",
+        type=int,
+        default=3600,
+        help="Resource discovery cache TTL in seconds (default: 3600)",
+    )
+    parser.add_argument(
+        "--cloudwatch-api-warn",
+        type=int,
+        default=80,
+        help="Warning threshold for API usage percentage (default: 80)",
+    )
+    parser.add_argument(
+        "--cloudwatch-api-crit",
+        type=int,
+        default=90,
+        help="Critical threshold for API usage percentage (default: 90)",
+    )
+    parser.add_argument(
+        "--force-over-limit",
+        action="store_true",
+        default=False,
+        help="Continue monitoring even when free tier limit is exceeded (costs apply)",
+    )
+    parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        default=False,
+        help="Force refresh: ignore all caches and fetch fresh data from AWS API",
+    )
+
+    return parser.parse_args()
+
+
+def output_section(result: dict) -> None:
+    """Output result as Checkmk agent section."""
+    print("<<<aws_cloudwatch:sep(0)>>>")
+    print(json.dumps(result))
+
+
+def main() -> None:
+    """Main entry point for the AWS CloudWatch special agent."""
+    args = parse_arguments()
+
+    # Hide secret key from process list
+    setproctitle.setproctitle("aws_cloudwatch_agent")
+
+    # Parse regions-services map
+    try:
+        regions_services_map = json.loads(args.cloudwatch_regions_map)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Invalid JSON in --cloudwatch-regions-map: {e}", file=sys.stderr)
+        output_section(
+            {
+                "CloudWatchMetrics": {},
+                "CloudWatchAPICounter": {"error": f"Invalid JSON configuration: {e}"},
+                "CloudWatchAPIConfig": {},
+            }
+        )
+        sys.exit(1)
+
+    # Check if any regions/services configured
+    if not regions_services_map:
+        print("ERROR: No regions/services configured", file=sys.stderr)
+        output_section(
+            {
+                "CloudWatchMetrics": {},
+                "CloudWatchAPICounter": {"error": "No regions configured"},
+                "CloudWatchAPIConfig": {},
+            }
+        )
+        sys.exit(1)
+
+    # Create orchestrator and run
+    try:
+        orchestrator = CloudWatchOrchestrator(
+            access_key=args.access_key,
+            secret_key=args.secret_key,
+            cache_ttl=args.cloudwatch_cache_ttl,
+            discovery_ttl=args.cloudwatch_discovery_ttl,
+            api_warn=args.cloudwatch_api_warn,
+            api_crit=args.cloudwatch_api_crit,
+            force_over_limit=args.force_over_limit,
+            force_refresh=args.force_refresh,
+        )
+
+        result = orchestrator.run(regions_services_map)
+
+    except Exception as error:
+        print(f"ERROR: CloudWatch fetch failed: {error}", file=sys.stderr)
+        result = {
+            "CloudWatchMetrics": {},
+            "CloudWatchAPICounter": {"error": str(error)},
+            "CloudWatchAPIConfig": {},
+        }
+
+    # Output in Checkmk agent format
+    output_section(result)
+
+
+if __name__ == "__main__":
+    main()

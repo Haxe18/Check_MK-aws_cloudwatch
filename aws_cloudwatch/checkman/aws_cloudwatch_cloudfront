@@ -1,0 +1,26 @@
+title: AWS CloudFront Distribution
+agents: aws
+catalog: cloud/aws
+license: WTFPL
+distribution: check_mk
+description:
+ This check monitors AWS CloudFront distribution metrics via CloudWatch.
+ Note: CloudFront metrics are only available in the us-east-1 region.
+
+ Monitored metrics:
+
+ - Requests: Total number of requests
+
+ - Bytes Downloaded/Uploaded: Data transfer volume
+
+ - Error Rates: Total, 4xx, and 5xx error rates as percentages
+
+ - Cache Hit Rate: Percentage of requests served from cache
+
+ - Origin Latency: Average latency to origin server in milliseconds
+
+ Thresholds can be configured for error rates, cache hit rate (lower bound),
+ and origin latency.
+
+discovery:
+ One service is created for each CloudFront distribution discovered.

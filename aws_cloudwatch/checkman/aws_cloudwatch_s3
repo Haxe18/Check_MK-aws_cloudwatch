@@ -1,0 +1,25 @@
+title: AWS S3 Bucket
+agents: aws
+catalog: cloud/aws
+license: WTFPL
+distribution: check_mk
+description:
+ This check monitors AWS S3 bucket metrics via CloudWatch.
+
+ Note: S3 CloudWatch metrics are reported once per day.
+
+ Monitored metrics:
+
+ - Bucket Size: Total size of all objects in the bucket in bytes
+   (sum across storage classes)
+
+ - Number of Objects: Total count of objects in the bucket
+   (AllStorageTypes)
+
+ S3 metrics are published daily by AWS.
+ Corresponding TTL information is available in service details.
+
+ Thresholds can be configured for bucket size and object count.
+
+discovery:
+ One service is created for each S3 bucket discovered.

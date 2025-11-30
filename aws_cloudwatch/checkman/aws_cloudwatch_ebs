@@ -1,0 +1,28 @@
+title: AWS EBS Volume
+agents: aws
+catalog: cloud/aws
+license: WTFPL
+distribution: check_mk
+description:
+ This check monitors AWS EBS volume metrics via CloudWatch.
+ It provides visibility into volume performance and capacity.
+
+ Monitored metrics:
+
+ - Read/Write Ops: IOPS operations count
+
+ - Read/Write Throughput: Data transfer in bytes
+
+ - Queue Length: Average I/O queue length (important for performance)
+
+ - Burst Balance: Remaining burst credits percentage (critical for gp2 volumes)
+
+ - Idle Time: Time volume spent idle
+
+ - Read/Write Latency: Calculated average latency per operation
+
+ Thresholds can be configured for IOPS, throughput, queue length, and
+ burst balance (lower bound).
+
+discovery:
+ One service is created for each EBS volume discovered.

@@ -1,0 +1,30 @@
+title: AWS RDS Database Instance
+agents: aws
+catalog: cloud/aws
+license: WTFPL
+distribution: check_mk
+description:
+ This check monitors AWS RDS database instance metrics via CloudWatch.
+ It provides visibility into database performance, storage, and health.
+
+ Monitored metrics:
+
+ - CPU Utilization: Percentage of CPU used
+
+ - Free Storage Space: Available storage (lower bound threshold)
+
+ - Freeable Memory: Available RAM (lower bound threshold)
+
+ - Database Connections: Current connection count
+
+ - Replica Lag: Replication delay for read replicas
+
+ - Read/Write Latency: Average I/O latency in milliseconds
+
+ - Read/Write IOPS: I/O operations per second
+
+ Thresholds can be configured for CPU, storage, memory, connections,
+ replica lag, and latency.
+
+discovery:
+ One service is created for each RDS instance discovered.

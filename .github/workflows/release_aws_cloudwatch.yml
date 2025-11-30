@@ -1,0 +1,20 @@
+name: Release AWS CloudWatch MKP
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on tags like v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: haxe18/Check_MK-plugin_mpk_action/.github/workflows/reusable_release.yml@main
+    with:
+      plugin_name: "aws_cloudwatch"
+      title: "AWS CloudWatch Monitoring"
+      description: "Checkmk plugin for monitoring AWS CloudWatch metrics using the free GetMetricStatistics API."
+      tag_prefix: "v"
+      changelog_filter_path: "aws_cloudwatch/"
+    secrets: inherit

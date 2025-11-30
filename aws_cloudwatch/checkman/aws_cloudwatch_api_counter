@@ -1,0 +1,19 @@
+title: AWS CloudWatch API Counter
+agents: aws
+catalog: cloud/aws
+license: WTFPL
+distribution: check_mk
+description:
+ This check forecasts monthly AWS CloudWatch API usage based on current
+ consumption and configuration. It calculates the expected API calls until
+ the end of the month using the formula:
+ forecast = current_aws_total + (remaining_days x daily_calls)
+
+ The check helps you stay within the AWS Free Tier limit of 1 million
+ GetMetricStatistics requests per month.
+
+ Thresholds can be configured for warning and critical states based on
+ the forecasted percentage of the free tier limit.
+
+discovery:
+ One service is created if CloudWatch API counter data is available.

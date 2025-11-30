@@ -1,0 +1,26 @@
+title: AWS Network Load Balancer
+agents: aws
+catalog: cloud/aws
+license: WTFPL
+distribution: check_mk
+description:
+ This check monitors AWS Network Load Balancer (NLB) metrics via CloudWatch.
+ It provides visibility into load balancer performance at the network layer.
+
+ Monitored metrics:
+
+ - Active Flow Count: Number of concurrent TCP/UDP flows
+
+ - New Flow Count: Number of new flows established
+
+ - Processed Bytes: Total bytes processed
+
+ - Healthy/Unhealthy Target Count: Number of healthy and unhealthy targets
+
+ - TCP Reset Counts: Client, Target, and NLB initiated resets
+
+ Thresholds can be configured for active flows, new flows, processed bytes,
+ and unhealthy targets.
+
+discovery:
+ One service is created for each Network Load Balancer discovered.

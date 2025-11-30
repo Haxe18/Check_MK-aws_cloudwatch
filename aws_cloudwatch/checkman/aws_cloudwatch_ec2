@@ -1,0 +1,28 @@
+title: AWS EC2 Instance
+agents: aws
+catalog: cloud/aws
+license: WTFPL
+distribution: check_mk
+description:
+ This check monitors AWS EC2 instance metrics via CloudWatch.
+ It provides visibility into instance performance and health.
+
+ Monitored metrics:
+
+ - CPU Utilization: Percentage of allocated CPU used
+
+ - Network In/Out: Network traffic in bytes
+
+ - Disk Read/Write Ops: Disk I/O operations count
+
+ - Disk Read/Write Bytes: Disk throughput
+
+ - Status Checks: Instance and system status check results (CRIT on failure)
+
+ - CPU Credit Balance: Available CPU credits (for burstable instances)
+
+ Thresholds can be configured for CPU utilization, network traffic,
+ disk operations, and CPU credit balance (lower bound).
+
+discovery:
+ One service is created for each EC2 instance discovered.
