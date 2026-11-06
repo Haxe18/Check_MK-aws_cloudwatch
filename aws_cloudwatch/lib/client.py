@@ -7,6 +7,7 @@ for making API calls with proper configuration.
 """
 
 import hashlib
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -65,6 +66,7 @@ class CloudWatchClient:
 
         # Lazy-loaded clients for other services
         self._service_clients: dict[str, Any] = {}
+        self._service_clients_lock = threading.Lock()
 
     def _get_service_client(self, service_name: str) -> Any:
         """Get or create a client for a specific service (lazy initialization).
@@ -75,12 +77,13 @@ class CloudWatchClient:
         Returns:
             boto3 client for the service
         """
-        if service_name not in self._service_clients:
-            self._service_clients[service_name] = self._session.client(
-                service_name,
-                config=BOTO3_RETRY_CONFIG,
-            )
-        return self._service_clients[service_name]
+        with self._service_clients_lock:
+            if service_name not in self._service_clients:
+                self._service_clients[service_name] = self._session.client(
+                    service_name,
+                    config=BOTO3_RETRY_CONFIG,
+                )
+            return self._service_clients[service_name]
 
     @staticmethod
     def get_profile_hash(access_key: str) -> str:
@@ -227,9 +230,11 @@ class CloudWatchClient:
             List of function names
         """
         function_names = []
-        lambda_client = self._session.client(
-            "lambda", region_name="us-east-1", config=BOTO3_RETRY_CONFIG
-        )
+        # boto3 Sessions are not thread-safe; other threads share this session
+        with self._service_clients_lock:
+            lambda_client = self._session.client(
+                "lambda", region_name="us-east-1", config=BOTO3_RETRY_CONFIG
+            )
         paginator = lambda_client.get_paginator("list_functions")
 
         for page in paginator.paginate():

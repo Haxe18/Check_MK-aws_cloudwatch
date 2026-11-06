@@ -31,6 +31,7 @@ git push origin v1.0.0
 
 `AWS_CLOUDWATCH_DEBUG=1` enables detailed logging on stderr (values: `1|true|yes`).
 Loggers centrally configured in `aws_cloudwatch/lib/logger.py` (`aws_cloudwatch.*` hierarchy).
+Debug lines show `[region:service]` (thread name set per task in `CloudWatchOrchestrator._run_service_task()`).
 
 ## Architecture
 
@@ -64,6 +65,7 @@ aws_cloudwatch/
 **Key Design:**
 - Multi-region support: regions_services_map = `{"region": ["service1", "service2"]}`
 - Per-region caching in `var_dir/agent_aws_cloudwatch/` (`$OMD_ROOT/var/check_mk/...`, survives site restarts, unlike the tmpfs `tmp_dir`)
+- Parallel collection (`lib/orchestrator.py`, `ServiceTask`): one thread pool over all region/service pairs (`--max-workers`, 1–10 in WATO; if unset, the agent uses min(4, 2 × CPUs); 1 = sequential); each task has its own `APICounter`/`ErrorCollector`, merged in config order afterwards so output is deterministic
 - Service definitions in `lib/services/` with `SECTION_REGISTRY` dict and region constraints
 - API counter tracks usage against 1M free tier via AWS FreeTier API (with per-service breakdown); Free Tier API failures surfaced as visible WARN via ErrorCollector
 - Config-key based cache invalidation (cache auto-invalidates when services change)

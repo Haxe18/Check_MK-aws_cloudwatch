@@ -18,10 +18,13 @@ Options:
     --cloudwatch-api-warn       Warning threshold for API usage (default: 80.0)
     --cloudwatch-api-crit       Critical threshold for API usage (default: 90.0)
     --force-refresh             Ignore all caches and fetch fresh data from AWS API
+    --max-workers               Maximum number of parallel threads
+                                (default: min(4, 2 x CPUs of this machine), 1 = sequential)
 """
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -121,8 +124,31 @@ def parse_arguments() -> argparse.Namespace:
         default=False,
         help="Force refresh: ignore all caches and fetch fresh data from AWS API",
     )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of parallel threads "
+            "(default: min(4, 2 x CPUs of this machine), 1 = sequential fallback)"
+        ),
+    )
 
     return parser.parse_args()
+
+
+def default_max_workers() -> int:
+    """Default thread count when none is configured: min(4, 2 x CPUs).
+
+    Keeps small machines (e.g. 1 CPU -> 2 threads) from short CPU spikes.
+    Counts the CPUs this process may use on the machine the agent runs on
+    (respects taskset/cpuset; not a cgroup CPU quota like docker --cpus).
+    """
+    if hasattr(os, "sched_getaffinity"):
+        cpu_count = len(os.sched_getaffinity(0))
+    else:
+        cpu_count = os.cpu_count() or 1
+    return min(4, 2 * cpu_count)
 
 
 def output_section(result: dict) -> None:
@@ -175,6 +201,9 @@ def main() -> None:
             api_crit=args.cloudwatch_api_crit,
             force_over_limit=args.force_over_limit,
             force_refresh=args.force_refresh,
+            max_workers=(
+                args.max_workers if args.max_workers is not None else default_max_workers()
+            ),
         )
 
         result = orchestrator.run(regions_services_map)

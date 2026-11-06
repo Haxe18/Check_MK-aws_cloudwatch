@@ -124,6 +124,7 @@ To enable alerting, configure thresholds via WATO rules:
    - API Critical Threshold (default: 90%)
    - **Free Tier Limit (1M requests/month)**: Stop or continue when limit reached
      - When stopped, service checks show OK "monitoring paused" instead of UNKNOWN
+   - Parallel Threads (range 1–10): How many region/service pairs are fetched at the same time; 1 = one after another. If not set: min(4, 2 × CPUs of the machine running the agent)
 
 ## Services Discovered
 

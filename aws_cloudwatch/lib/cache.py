@@ -200,6 +200,25 @@ class APICounter:
                 self._by_service[service] = {"list_metrics": 0, "get_statistics": 0}
             self._by_service[service][api_type] += count
 
+    def add_counts(self, count: int, breakdown: dict[str, dict[str, int]]) -> None:
+        """Merge counts from another counter into this counter.
+
+        Used to merge per-service counters into the global counter after
+        the parallel run has finished.
+
+        Args:
+            count: Total number of requests to add
+            breakdown: Dict mapping service names to their API call counts
+        """
+        self._count += count
+        for service, api_types in breakdown.items():
+            if service not in self._by_service:
+                self._by_service[service] = {"list_metrics": 0, "get_statistics": 0}
+            for api_type, api_count in api_types.items():
+                self._by_service[service][api_type] = (
+                    self._by_service[service].get(api_type, 0) + api_count
+                )
+
     def get_count(self) -> int:
         """Get the total request count."""
         return self._count

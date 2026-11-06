@@ -57,6 +57,7 @@ def _agent_arguments(
             - cloudwatch_discovery_ttl: Resource discovery cache TTL in seconds
             - cloudwatch_api_warn: Warning threshold percentage
             - cloudwatch_api_crit: Critical threshold percentage
+            - cloudwatch_max_workers: Parallel threads (optional, 1-10)
         host_config: Host configuration object (unused).
 
     Yields:
@@ -119,6 +120,11 @@ def _agent_arguments(
         behavior = _extract_cascading_value(limit_behavior)
         if behavior == "force":
             args.append("--force-over-limit")
+
+    # Parallel workers
+    max_workers = params.get("cloudwatch_max_workers")
+    if max_workers is not None:
+        args.extend(["--max-workers", str(int(max_workers))])
 
     yield SpecialAgentCommand(command_arguments=args)
 

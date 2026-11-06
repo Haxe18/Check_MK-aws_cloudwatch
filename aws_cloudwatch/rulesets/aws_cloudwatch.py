@@ -276,6 +276,23 @@ def _valuespec_special_agents_aws_cloudwatch() -> Dictionary:
                 ),
                 required=False,
             ),
+            "cloudwatch_max_workers": DictElement(
+                parameter_form=Integer(
+                    title=Title("Parallel Threads (max-workers)"),
+                    help_text=Help(
+                        "Maximum number of parallel threads for resource discovery and metric collection "
+                        "across regions and services. "
+                        "If not set, the agent uses min(4, 2 x CPUs of the machine it runs on), "
+                        "e.g. 2 threads on a single-CPU instance. "
+                        "A value set here is used as is. Set to 1 to disable parallelism. "
+                        "Allowed range: 1 to 10; 10 matches the default connection pool of a boto3 "
+                        "client, which all threads of one region share."
+                    ),
+                    custom_validate=(validators.NumberInRange(min_value=1, max_value=10),),
+                    prefill=DefaultValue(4),
+                ),
+                required=False,
+            ),
             "cloudwatch_stop_at_limit": DictElement(
                 parameter_form=CascadingSingleChoice(
                     title=Title(f"Free Tier Limit ({_FREE_TIER} requests/month)"),

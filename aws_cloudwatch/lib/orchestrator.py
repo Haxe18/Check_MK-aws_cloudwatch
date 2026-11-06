@@ -6,7 +6,10 @@ This module provides the main coordinator that runs all configured
 CloudWatch sections across multiple regions.
 """
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +35,24 @@ SERVICE_METRICS_TTL_OVERRIDES: dict[str, int] = {
 }
 
 
+@dataclass
+class ServiceTask:
+    """One region/service pair to process, with its own API counter and error collector.
+
+    The orchestrator merges the counter and collector into the global ones
+    after all tasks finished, in config order.
+    """
+
+    region: str
+    service_name: str
+    client: CloudWatchClient
+    cache_dir: Path
+    config_key: str
+    api_counter: APICounter = field(default_factory=APICounter)
+    error_collector: ErrorCollector = field(default_factory=ErrorCollector)
+    phase: str = "discovery"
+
+
 class CloudWatchOrchestrator:
     """Coordinates running all CloudWatch sections across regions.
 
@@ -52,6 +73,7 @@ class CloudWatchOrchestrator:
         api_crit: int = 90,
         force_over_limit: bool = False,
         force_refresh: bool = False,
+        max_workers: int = 1,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -64,6 +86,8 @@ class CloudWatchOrchestrator:
             api_crit: Critical threshold for API usage percentage (integer 0-100)
             force_over_limit: Continue monitoring even when free tier limit is exceeded
             force_refresh: Ignore all caches and fetch fresh data from AWS API
+            max_workers: Maximum number of parallel threads (1 = sequential; the agent
+                passes min(4, 2 x CPUs) when nothing is configured)
         """
         # Store credentials for passing to clients (not as instance variables for security)
         # These are only used to create boto3 clients, not stored longer than necessary
@@ -86,6 +110,8 @@ class CloudWatchOrchestrator:
         self._api_crit = max(0, min(100, int(api_crit)))
         self._force_over_limit = force_over_limit
         self._force_refresh = force_refresh
+
+        self._max_workers = max(1, int(max_workers))
         self._api_counter = APICounter()
         self._error_collector = ErrorCollector()
 
@@ -168,6 +194,264 @@ class CloudWatchOrchestrator:
                 )
             return 0, 0
 
+    def _process_service(self, task: ServiceTask) -> dict[str, Any] | None:
+        """Process a single service for a region.
+
+        API calls and errors go to the task's own counter and collector. The
+        caller merges them into the global ones in a fixed order. Tasks of the
+        same region share the client (its lazy client creation is locked) and
+        the cache directory (each service writes its own cache files).
+
+        Args:
+            task: Service task with region, client, cache settings and local trackers
+
+        Returns:
+            Result dict or None if service should be skipped (unknown or region constraint)
+        """
+        service_name = task.service_name
+        region = task.region
+
+        section_class = SECTION_REGISTRY.get(service_name)
+        if not section_class:
+            logger.warning("Unknown service '%s', skipping", service_name)
+            return None
+
+        logger.debug(
+            "Creating section for service '%s' (%s)",
+            service_name,
+            section_class.__name__,
+        )
+
+        section = section_class(task.client, task.api_counter, task.error_collector)
+
+        if not section.can_run_in_region(region):
+            logger.warning("%s cannot run in %s, skipping", service_name, region)
+            return None
+
+        service_metrics_ttl = SERVICE_METRICS_TTL_OVERRIDES.get(service_name, self._cache_ttl)
+        service_region_requests = 0
+
+        discovery_cache = DataCache(
+            cache_dir=task.cache_dir,
+            ttl=self._discovery_ttl,
+            prefix="discovery_",
+        )
+
+        # ========== PHASE 1: DISCOVERY (Long TTL Cache) ==========
+        task.phase = "discovery"
+        discovery_key = service_name
+        resources: list[Resource] | None = None
+
+        if self._force_refresh:
+            cached_discovery = None
+            logger.debug("Force refresh: skipping discovery cache for '%s'", service_name)
+        else:
+            cached_discovery = discovery_cache.load(discovery_key, config_key=task.config_key)
+
+        if cached_discovery and "resources" in cached_discovery:
+            logger.debug(
+                "Using cached discovery for '%s' (%d resources)",
+                service_name,
+                len(cached_discovery["resources"]),
+            )
+            try:
+                resources = [Resource.from_dict(r) for r in cached_discovery["resources"]]
+            except (KeyError, TypeError) as err:
+                logger.warning(
+                    "Corrupted discovery cache for %s: %s, deleting and fetching fresh",
+                    service_name,
+                    err,
+                )
+                discovery_cache.delete(discovery_key)
+                resources = None
+
+            if resources is not None:
+                # Re-add errors that occurred during the original discovery run
+                task.error_collector.merge_from_list(cached_discovery.get("discovery_errors", []))
+
+        if resources is None:
+            logger.debug("Fetching fresh discovery for '%s'", service_name)
+            calls_before = task.api_counter.get_count()
+            try:
+                resources = section.discover_resources()
+                service_region_requests += task.api_counter.get_count() - calls_before
+
+                # The collector holds only discovery errors at this point
+                discovery_errors = task.error_collector.to_list()
+
+                discovery_cache.save(
+                    discovery_key,
+                    {
+                        "resources": [r.to_dict() for r in resources],
+                        "timestamp": int(time.time()),
+                        "discovery_errors": discovery_errors,
+                    },
+                    config_key=task.config_key,
+                )
+                logger.debug(
+                    "Discovered %d resources for '%s'",
+                    len(resources),
+                    service_name,
+                )
+            except (BotoCoreError, ClientError) as err:
+                # Count calls made before the failure (same as in _run_service_task)
+                service_region_requests += task.api_counter.get_count() - calls_before
+                hint = get_permission_hint(err, "list_metrics")
+                task.error_collector.add("discovery", service_name, region, str(err), hint)
+                logger.error(
+                    "Discovery failed for %s in %s: %s",
+                    service_name,
+                    region,
+                    err,
+                    exc_info=True,
+                )
+                resources = []
+
+        # Collect resource metadata (e.g., CloudFront comment/URL)
+        service_metadata: dict[str, Any] = {}
+        if resources:
+            service_metadata = {r.id: r.metadata for r in resources if r.metadata}
+
+        # ========== PHASE 2: METRICS (Short TTL Cache) ==========
+        task.phase = "metrics"
+        metrics_cache = DataCache(
+            cache_dir=task.cache_dir,
+            ttl=service_metrics_ttl,
+            prefix=f"metrics_{service_name}_",
+        )
+        metrics_key = service_name
+
+        if self._force_refresh:
+            cached_metrics = None
+            logger.debug("Force refresh: skipping metrics cache for '%s'", service_name)
+        else:
+            cached_metrics = metrics_cache.load(metrics_key, config_key=task.config_key)
+
+        refresh_api_calls = 0.0
+
+        if cached_metrics and "metrics" in cached_metrics:
+            metrics_data = cached_metrics["metrics"]
+            cached_api_calls = cached_metrics.get("api_calls", 0)
+            refresh_api_calls = float(cached_api_calls)
+            service_region_requests += cached_api_calls
+            logger.debug(
+                "Using cached metrics for '%s' (%d metrics, %d cached API calls)",
+                service_name,
+                len(metrics_data),
+                cached_api_calls,
+            )
+        else:
+            logger.debug(
+                "Fetching fresh metrics for '%s' (%d resources)",
+                service_name,
+                len(resources),
+            )
+            calls_before = task.api_counter.get_count()
+            try:
+                results = section.fetch_all_metrics(
+                    resources,
+                    period=service_metrics_ttl,
+                )
+                api_calls = task.api_counter.get_count() - calls_before
+                refresh_api_calls = float(api_calls)
+                service_region_requests += api_calls
+
+                metrics_data = [m.to_dict() for m in results]
+                metrics_cache.save(
+                    metrics_key,
+                    {
+                        "metrics": metrics_data,
+                        "api_calls": api_calls,
+                        "timestamp": int(time.time()),
+                    },
+                    config_key=task.config_key,
+                )
+                logger.debug(
+                    "Got %d metrics, %d API calls for '%s'",
+                    len(metrics_data),
+                    api_calls,
+                    service_name,
+                )
+            except (BotoCoreError, ClientError) as err:
+                # Count calls made before the failure (same as in _run_service_task)
+                service_region_requests += task.api_counter.get_count() - calls_before
+                hint = get_permission_hint(err, "get_statistics")
+                task.error_collector.add("metrics", service_name, region, str(err), hint)
+                logger.error(
+                    "Failed to fetch metrics for %s in %s: %s",
+                    service_name,
+                    region,
+                    err,
+                    exc_info=True,
+                )
+                metrics_data = []
+                refresh_api_calls = 0.0
+
+        # Regionalize resource IDs
+        regionalized_metrics = []
+        for metric in metrics_data:
+            metric_copy = metric.copy()
+            original_id = metric_copy.get("resource_id", "unknown")
+            metric_copy["resource_id"] = f"{region}:{original_id}"
+            metric_copy["region"] = region
+            regionalized_metrics.append(metric_copy)
+
+        logger.debug(
+            "Added %d metrics for '%s:%s'",
+            len(regionalized_metrics),
+            region,
+            service_name,
+        )
+
+        return {
+            "service_name": service_name,
+            "combined_key": f"{region}:{service_name}",
+            "regionalized_metrics": regionalized_metrics,
+            "service_metadata": service_metadata,
+            "region_requests": service_region_requests,
+            "refresh_api_calls": refresh_api_calls,
+            "service_metrics_ttl": service_metrics_ttl,
+            "is_empty": not resources,
+            "section_title": section.title,
+        }
+
+    def _run_service_task(self, task: ServiceTask) -> dict[str, Any] | None:
+        """Run one service task and turn unexpected errors into collected errors.
+
+        Unexpected errors are filed under the phase that failed ("discovery"
+        or "metrics"). API calls made before the failure stay in the task's
+        counter; the caller adds them to the region and service totals.
+
+        Args:
+            task: Service task to run
+
+        Returns:
+            Result dict from _process_service, or None if skipped or failed
+        """
+        # Name the thread after the task, so debug log lines show region and service
+        thread = threading.current_thread()
+        original_name = thread.name
+        thread.name = f"{task.region}:{task.service_name}"
+        try:
+            return self._process_service(task)
+        except Exception as err:
+            logger.error(
+                "Unexpected error processing %s in %s: %s",
+                task.service_name,
+                task.region,
+                err,
+                exc_info=True,
+            )
+            task.error_collector.add(
+                task.phase,
+                task.service_name,
+                task.region,
+                f"Unexpected error: {type(err).__name__}: {err}",
+            )
+            return None
+        finally:
+            thread.name = original_name
+
     def run(self, regions_services_map: dict[str, list[str]]) -> dict[str, Any]:
         """Run all configured sections and return combined output.
 
@@ -231,8 +515,8 @@ class CloudWatchOrchestrator:
 
         combined_metrics: dict[str, list[dict[str, Any]]] = {}
         requests_by_region: dict[str, int] = {}
-        empty_services: dict[str, list[str]] = {}  # {region: [services without resources]}
-        resource_metadata: dict[str, dict[str, Any]] = {}  # {region:service: {id: metadata}}
+        empty_services: dict[str, list[str]] = {}
+        resource_metadata: dict[str, dict[str, Any]] = {}
         total_services_count = 0
         estimated_calls_per_check = 0.0
         weighted_calls_per_check_by_service: dict[str, dict[str, float]] = {}
@@ -243,10 +527,12 @@ class CloudWatchOrchestrator:
 
         access_key, secret_key = self.__credentials
 
+        # Build one task per region/service pair. Clients are created up front
+        # (sequentially), so a single pool can run all pairs with max_workers threads.
+        # Each plan holds either the region's tasks or the (message, hint) of its client error.
+        region_plans: list[tuple[str, list[ServiceTask], tuple[str, str | None] | None]] = []
         for region, services in regions_services_map.items():
             logger.debug("Processing region '%s' with services %s", region, services)
-
-            # Create region-specific client
             try:
                 client = CloudWatchClient(
                     access_key=access_key,
@@ -255,240 +541,77 @@ class CloudWatchOrchestrator:
                 )
             except (BotoCoreError, ClientError) as err:
                 hint = get_permission_hint(err, "create_client")
-                self._error_collector.add("api", "client", region, str(err), hint)
                 logger.error("Failed to create client for region %s: %s", region, err)
+                region_plans.append((region, [], (str(err), hint)))
                 continue
 
-            # Config key for cache validation (sorted services for this region)
             config_key = ",".join(sorted(services))
-
-            # Create discovery cache (metrics cache is service-specific)
             cache_dir = self._get_cache_dir(region)
-            discovery_cache = DataCache(
-                cache_dir=cache_dir,
-                ttl=self._discovery_ttl,
-                prefix="discovery_",
-            )
-
             logger.debug("Cache dir: %s", cache_dir)
             logger.debug(
                 "Discovery TTL: %ds, Default Metrics TTL: %ds",
                 self._discovery_ttl,
                 self._cache_ttl,
             )
-
-            region_requests = 0
-
-            for service_name in services:
-                section_class = SECTION_REGISTRY.get(service_name)
-                if not section_class:
-                    logger.warning("Unknown service '%s', skipping", service_name)
-                    continue
-
-                logger.debug(
-                    "Creating section for service '%s' (%s)",
-                    service_name,
-                    section_class.__name__,
+            region_tasks = [
+                ServiceTask(
+                    region=region,
+                    service_name=service_name,
+                    client=client,
+                    cache_dir=cache_dir,
+                    config_key=config_key,
                 )
+                for service_name in services
+            ]
+            region_plans.append((region, region_tasks, None))
 
-                # Create section instance
-                section = section_class(client, self._api_counter, self._error_collector)
+        all_tasks = [task for _, region_tasks, _ in region_plans for task in region_tasks]
+        if self._max_workers > 1 and len(all_tasks) > 1:
+            with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
+                all_results = list(executor.map(self._run_service_task, all_tasks))
+        else:
+            all_results = [self._run_service_task(task) for task in all_tasks]
+        # all_results is in the same order as all_tasks, i.e. config order
+        results_in_order = iter(all_results)
 
-                # Check region constraints
-                if not section.can_run_in_region(region):
-                    logger.warning("%s cannot run in %s, skipping", service_name, region)
+        # Aggregate in config order, so errors and lists come out the same on every run
+        for region, region_tasks, client_error in region_plans:
+            if client_error is not None:
+                message, hint = client_error
+                self._error_collector.add("api", "client", region, message, hint)
+                continue
+
+            requests_by_region[region] = 0
+            for task in region_tasks:
+                self._api_counter.add_counts(
+                    task.api_counter.get_count(), task.api_counter.get_breakdown()
+                )
+                self._error_collector.merge_from_list(task.error_collector.to_list())
+
+                service_result = next(results_in_order)
+                if service_result is None:
+                    # Skipped (0 calls) or failed: count the calls made before the failure
+                    requests_by_region[region] += task.api_counter.get_count()
                     continue
 
                 total_services_count += 1
+                requests_by_region[region] += service_result["region_requests"]
 
-                # ========== PHASE 1: DISCOVERY (Long TTL Cache) ==========
-                discovery_key = service_name
-                resources: list[Resource] | None = None
+                combined_key = service_result["combined_key"]
+                combined_metrics[combined_key] = service_result["regionalized_metrics"]
 
-                # Load from cache unless force_refresh is enabled
-                if self._force_refresh:
-                    cached_discovery = None
-                    logger.debug(
-                        "Force refresh: skipping discovery cache for '%s'", service_name
-                    )
-                else:
-                    cached_discovery = discovery_cache.load(
-                        discovery_key, config_key=config_key
-                    )
+                if service_result["service_metadata"]:
+                    resource_metadata[combined_key] = service_result["service_metadata"]
 
-                if cached_discovery and "resources" in cached_discovery:
-                    # Use cached discovery
-                    logger.debug(
-                        "Using cached discovery for '%s' (%d resources)",
-                        service_name,
-                        len(cached_discovery["resources"]),
-                    )
-                    try:
-                        resources = [
-                            Resource.from_dict(r) for r in cached_discovery["resources"]
-                        ]
-                    except (KeyError, TypeError) as err:
-                        logger.warning(
-                            "Corrupted discovery cache for %s: %s, deleting and fetching fresh",
-                            service_name,
-                            err,
-                        )
-                        # Delete corrupted cache file
-                        discovery_cache.delete(discovery_key)
-                        resources = None
-
-                    # Re-add any errors that occurred during the original discovery run
-                    # so they remain visible in Checkmk on every cached run
-                    for err_entry in cached_discovery.get("discovery_errors", []):
-                        self._error_collector.add(
-                            err_entry["category"],
-                            err_entry["service"],
-                            err_entry["region"],
-                            err_entry["message"],
-                            err_entry.get("hint"),
-                        )
-
-                if resources is None:
-                    # Fetch fresh discovery
-                    logger.debug("Fetching fresh discovery for '%s'", service_name)
-                    error_count_before = self._error_collector.count()
-                    try:
-                        resources = section.discover_resources()
-                        region_requests += 1  # list_metrics API call
-
-                        # Capture errors that occurred during this discovery
-                        # (e.g. filtering API permission failures)
-                        discovery_errors = self._error_collector.to_list()[error_count_before:]
-
-                        # Save to discovery cache including any filtering errors
-                        discovery_cache.save(
-                            discovery_key,
-                            {
-                                "resources": [r.to_dict() for r in resources],
-                                "timestamp": int(time.time()),
-                                "discovery_errors": discovery_errors,
-                            },
-                            config_key=config_key,
-                        )
-                        logger.debug(
-                            "Discovered %d resources for '%s'",
-                            len(resources),
-                            service_name,
-                        )
-                    except (BotoCoreError, ClientError) as err:
-                        hint = get_permission_hint(err, "list_metrics")
-                        self._error_collector.add(
-                            "discovery", service_name, region, str(err), hint
-                        )
-                        logger.error(
-                            "Discovery failed for %s in %s: %s",
-                            service_name,
-                            region,
-                            err,
-                            exc_info=True,
-                        )
-                        resources = []
-
-                # Collect resource metadata (e.g., CloudFront comment/URL)
-                if resources:
-                    combined_key = f"{region}:{service_name}"
-                    service_metadata = {r.id: r.metadata for r in resources if r.metadata}
-                    if service_metadata:
-                        resource_metadata[combined_key] = service_metadata
-
-                # Track services without resources (possible permissions issue)
-                if not resources:
+                if service_result["is_empty"]:
                     if region not in empty_services:
                         empty_services[region] = []
-                    empty_services[region].append(section.title)
+                    empty_services[region].append(service_result["section_title"])
 
-                # ========== PHASE 2: METRICS (Short TTL Cache) ==========
-                metrics_key = service_name
-                service_metrics_ttl = SERVICE_METRICS_TTL_OVERRIDES.get(
-                    service_name,
-                    self._cache_ttl,
-                )
-                metrics_cache = DataCache(
-                    cache_dir=cache_dir,
-                    ttl=service_metrics_ttl,
-                    prefix=f"metrics_{service_name}_",
-                )
-
-                # Load from cache unless force_refresh is enabled
-                if self._force_refresh:
-                    cached_metrics = None
-                    logger.debug(
-                        "Force refresh: skipping metrics cache for '%s'", service_name
-                    )
-                else:
-                    cached_metrics = metrics_cache.load(metrics_key, config_key=config_key)
-
-                if cached_metrics and "metrics" in cached_metrics:
-                    # Use cached metrics
-                    metrics_data = cached_metrics["metrics"]
-                    # Include cached API call count for forecast calculation
-                    cached_api_calls = cached_metrics.get("api_calls", 0)
-                    refresh_api_calls = float(cached_api_calls)
-                    region_requests += cached_api_calls
-                    logger.debug(
-                        "Using cached metrics for '%s' (%d metrics, %d cached API calls)",
-                        service_name,
-                        len(metrics_data),
-                        cached_api_calls,
-                    )
-                else:
-                    # Fetch fresh metrics
-                    logger.debug(
-                        "Fetching fresh metrics for '%s' (%d resources)",
-                        service_name,
-                        len(resources),
-                    )
-                    try:
-                        initial_count = self._api_counter.get_count()
-
-                        # Use cached or fresh resources to fetch metrics
-                        results = section.fetch_all_metrics(
-                            resources,
-                            period=service_metrics_ttl,
-                        )
-
-                        api_calls = self._api_counter.get_count() - initial_count
-                        refresh_api_calls = float(api_calls)
-                        region_requests += api_calls
-
-                        metrics_data = [m.to_dict() for m in results]
-
-                        # Save to metrics cache
-                        metrics_cache.save(
-                            metrics_key,
-                            {
-                                "metrics": metrics_data,
-                                "api_calls": api_calls,
-                                "timestamp": int(time.time()),
-                            },
-                            config_key=config_key,
-                        )
-
-                        logger.debug(
-                            "Got %d metrics, %d API calls for '%s'",
-                            len(metrics_data),
-                            api_calls,
-                            service_name,
-                        )
-                    except (BotoCoreError, ClientError) as err:
-                        hint = get_permission_hint(err, "get_statistics")
-                        self._error_collector.add(
-                            "metrics", service_name, region, str(err), hint
-                        )
-                        logger.error(
-                            "Failed to fetch metrics for %s in %s: %s",
-                            service_name,
-                            region,
-                            err,
-                            exc_info=True,
-                        )
-                        metrics_data = []
-                        refresh_api_calls = 0.0
+                # Weighted API calls calculation
+                service_name = service_result["service_name"]
+                service_metrics_ttl = service_result["service_metrics_ttl"]
+                refresh_api_calls = service_result["refresh_api_calls"]
 
                 refresh_ratio = (
                     self._cache_ttl / service_metrics_ttl if service_metrics_ttl > 0 else 1.0
@@ -524,26 +647,6 @@ class CloudWatchOrchestrator:
                         weighted_calls_per_check_default_by_service.get(service_name, 0.0)
                         + weighted_calls
                     )
-
-                # Regionalize resource IDs and add to combined metrics
-                regionalized_metrics = []
-                for metric in metrics_data:
-                    metric_copy = metric.copy()
-                    original_id = metric_copy.get("resource_id", "unknown")
-                    metric_copy["resource_id"] = f"{region}:{original_id}"
-                    metric_copy["region"] = region
-                    regionalized_metrics.append(metric_copy)
-
-                combined_key = f"{region}:{service_name}"
-                combined_metrics[combined_key] = regionalized_metrics
-
-                logger.debug(
-                    "Added %d metrics for '%s'",
-                    len(regionalized_metrics),
-                    combined_key,
-                )
-
-            requests_by_region[region] = region_requests
 
         # Calculate checks per month based on cache TTL
         checks_per_month = (

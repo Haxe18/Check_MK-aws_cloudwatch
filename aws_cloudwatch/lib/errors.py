@@ -35,7 +35,8 @@ class CloudWatchError:
 class ErrorCollector:
     """Collects and aggregates errors during CloudWatch data collection.
 
-    Provides methods to add and count errors and export them for the check output.
+    Provides methods to add errors, merge errors from another collector,
+    and export them for the check output.
     """
 
     def __init__(self) -> None:
@@ -61,14 +62,6 @@ class ErrorCollector:
         """
         self._errors.append(CloudWatchError(category, service, region, message, hint))
 
-    def count(self) -> int:
-        """Get the total number of errors.
-
-        Returns:
-            Number of errors collected
-        """
-        return len(self._errors)
-
     def to_list(self) -> list[dict[str, Any]]:
         """Convert errors to a list of dictionaries for JSON serialization.
 
@@ -76,3 +69,12 @@ class ErrorCollector:
             List of error dictionaries
         """
         return [asdict(e) for e in self._errors]
+
+    def merge_from_list(self, errors: list[dict[str, Any]]) -> None:
+        """Merge a list of error dicts (from to_list()) into this collector.
+
+        Args:
+            errors: List of error dictionaries as returned by to_list()
+        """
+        for err in errors:
+            self.add(err["category"], err["service"], err["region"], err["message"], err.get("hint"))
