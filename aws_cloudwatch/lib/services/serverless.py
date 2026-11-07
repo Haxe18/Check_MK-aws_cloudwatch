@@ -5,25 +5,16 @@
 This module provides CloudWatch monitoring for Lambda functions.
 """
 
-from datetime import datetime
+from dataclasses import replace
 from typing import TYPE_CHECKING
-
-from botocore.exceptions import BotoCoreError, ClientError
 
 from ..base import CloudWatchSection
 from ..errors import ErrorCollector
-from ..iam_hints import get_permission_hint
-from ..logger import get_logger
-from ..types import MetricDefinition, MetricResult, Resource
+from ..types import MetricDefinition, Resource
 
 if TYPE_CHECKING:
     from ..cache import APICounter
     from ..client import CloudWatchClient
-
-logger = get_logger("serverless")
-
-# Time window of ListMetrics RecentlyActive=PT3H
-RECENTLY_ACTIVE_SECONDS = 3 * 3600
 
 
 def _is_lambda_edge(resource_id: str) -> bool:
@@ -60,9 +51,6 @@ class LambdaSection(CloudWatchSection):
         """
         super().__init__(client, api_counter, error_collector)
         self._filter_deleted = filter_deleted
-        # (function id, metric name) pairs with data in the past 3 hours;
-        # None = unknown, fetch everything
-        self._recently_active: set[tuple[str, str]] | None = None
 
     @property
     def name(self) -> str:
@@ -82,7 +70,7 @@ class LambdaSection(CloudWatchSection):
 
     @property
     def metrics(self) -> list[MetricDefinition]:
-        return [
+        metrics = [
             # Invocation metrics
             MetricDefinition("Invocations", "Sum", "Count"),
             MetricDefinition("Errors", "Sum", "Count"),
@@ -107,6 +95,9 @@ class LambdaSection(CloudWatchSection):
             MetricDefinition("AsyncEventAge", "Average", "Milliseconds"),
             MetricDefinition("AsyncEventsDropped", "Sum", "Count"),
         ]
+        # Idle or deleted functions count as 0 without a call: most functions run
+        # only now and then, a call per metric each refresh would cost the most
+        return [replace(m, skip_idle=True) for m in metrics]
 
     def discover_resources(self) -> list[Resource]:
         """Discover Lambda functions, optionally filtering out deleted ones.
@@ -140,86 +131,6 @@ class LambdaSection(CloudWatchSection):
                 resource_key=lambda res: res.id.removeprefix("us-east-1."),
             )
         return kept
-
-    def fetch_all_metrics(
-        self, resources: list[Resource], period: int = 300
-    ) -> list[MetricResult]:
-        """Fetch metrics, skipping functions/metrics without recent data.
-
-        One ListMetrics call (RecentlyActive=PT3H) tells which metrics had data
-        in the past 3 hours. All others (idle or deleted functions) are reported
-        as 0 without a GetMetricStatistics call - the same value AWS would give.
-        """
-        self._recently_active = None
-        lookback_seconds, _ = self.metric_query_window(period)
-        # RecentlyActive only covers 3 hours; a longer lookback could miss real data
-        if resources and lookback_seconds <= RECENTLY_ACTIVE_SECONDS:
-            try:
-                response = self._client.list_metrics(self.namespace, recently_active=True)
-                self._api_counter.increment(
-                    response.get("PageCount", 1), service=self.name, api_type="list_metrics"
-                )
-                active: set[tuple[str, str]] = set()
-                for metric_info in response.get("Metrics", []):
-                    resource = self._extract_resource(metric_info)
-                    if resource:
-                        active.add((resource.id, metric_info["MetricName"]))
-                self._recently_active = active
-                logger.debug(
-                    "[%s] %d metric/function pairs active in the past 3 hours",
-                    self.name,
-                    len(active),
-                )
-            except (BotoCoreError, ClientError) as err:
-                hint = get_permission_hint(err, "list_metrics")
-                if self._error_collector:
-                    self._error_collector.add(
-                        category="metrics",
-                        service=self.name,
-                        region=self._client.region,
-                        message=(
-                            "Could not list recently active metrics, fetching all "
-                            f"(more API calls): {err}"
-                        ),
-                        hint=hint,
-                    )
-                logger.warning(
-                    "[%s] Could not list recently active metrics, fetching all: %s",
-                    self.name,
-                    err,
-                )
-        return super().fetch_all_metrics(resources, period)
-
-    def fetch_metric(
-        self,
-        resource: Resource,
-        metric: MetricDefinition,
-        start_time: datetime,
-        end_time: datetime,
-        period: int,
-    ) -> MetricResult | None:
-        """Return 0 without an API call when the metric had no recent data."""
-        if (
-            self._recently_active is not None
-            and (resource.id, metric.name) not in self._recently_active
-        ):
-            logger.debug(
-                "[%s] Skipping %s for %s: no data in the past 3 hours",
-                self.name,
-                metric.name,
-                resource.id,
-            )
-            return MetricResult(
-                resource_id=resource.id,
-                metric_name=metric.name,
-                value=0,
-                unit=metric.unit,
-                stat=metric.stat,
-                timestamp=None,
-                period=period,
-                region=self._client.region,
-            )
-        return super().fetch_metric(resource, metric, start_time, end_time, period)
 
 
 class LambdaInsightsSection(CloudWatchSection):

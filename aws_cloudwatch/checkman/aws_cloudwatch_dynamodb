@@ -15,9 +15,12 @@ description:
 
  - Successful Request Latency: Average latency in milliseconds
 
- - User/System Errors: Error counts with appropriate severity
+ - System Errors: Error count (CRIT if greater than 0)
 
  - Provisioned Read/Write Capacity: Configured capacity units
+
+ Shown in the service details only (no thresholds, graphed):
+ Conditional check failed requests, transaction conflicts.
 
  Thresholds can be configured for capacity consumption, throttle events,
  and request latency.

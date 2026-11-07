@@ -35,7 +35,8 @@ DYNAMODB_THRESHOLDS = [
     milliseconds_threshold(
         "latency_levels",
         "Request Latency (ms)",
-        "Alert when average request latency exceeds these thresholds.",
+        "Alert when the average request latency of the slowest operation "
+        "(e.g. Scan, Query, GetItem) exceeds these thresholds.",
     ),
 ]
 

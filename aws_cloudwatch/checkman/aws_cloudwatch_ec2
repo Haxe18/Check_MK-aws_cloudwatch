@@ -21,6 +21,10 @@ description:
 
  - CPU Credit Balance: Available CPU credits (for burstable instances)
 
+ Shown in the service details only (no thresholds, graphed):
+ CPU credit usage, network packets in/out, EBS read/write
+ ops and bytes (instance store metrics stay under Disk Read/Write).
+
  Thresholds can be configured for CPU utilization, network traffic,
  disk operations, and CPU credit balance (lower bound).
 

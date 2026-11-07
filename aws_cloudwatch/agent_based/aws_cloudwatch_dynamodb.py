@@ -50,11 +50,6 @@ DYNAMODB_METRIC_SPECS = [
 ]
 
 
-def _dynamodb_error_state(value: float) -> State:
-    """Determine state for DynamoDB user errors."""
-    return State.WARN if value > 0 else State.OK
-
-
 def _dynamodb_system_error_state(value: float) -> State:
     """Determine state for DynamoDB system errors."""
     return State.CRIT if value > 0 else State.OK
@@ -62,13 +57,6 @@ def _dynamodb_system_error_state(value: float) -> State:
 
 # Informational metrics with custom state functions
 DYNAMODB_INFO_METRICS = [
-    InfoMetricSpec(
-        metric_key="UserErrors_Sum",
-        label="User Errors",
-        metric_name="user_errors",
-        render_type=RenderType.INTEGER,
-        state_func=_dynamodb_error_state,
-    ),
     InfoMetricSpec(
         metric_key="SystemErrors_Sum",
         label="System Errors",
@@ -87,6 +75,21 @@ DYNAMODB_INFO_METRICS = [
         label="Provisioned Write",
         metric_name="provisioned_write",
         render_type=RenderType.UNITS,
+    ),
+    # Shown in the service details only
+    InfoMetricSpec(
+        metric_key="ConditionalCheckFailedRequests_Sum",
+        label="Conditional Check Failed",
+        metric_name="conditional_check_failed",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="TransactionConflict_Sum",
+        label="Transaction Conflicts",
+        metric_name="transaction_conflicts",
+        render_type=RenderType.INTEGER,
+        details_only=True,
     ),
 ]
 

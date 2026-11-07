@@ -117,7 +117,6 @@ class ELBv2ApplicationSection(_ELBv2Section):
         return [
             # Request metrics
             MetricDefinition("RequestCount", "Sum", "Count"),
-            MetricDefinition("RequestCountPerTarget", "Sum", "Count"),
             # Connection metrics
             MetricDefinition("ActiveConnectionCount", "Sum", "Count"),
             MetricDefinition("NewConnectionCount", "Sum", "Count"),
@@ -141,8 +140,24 @@ class ELBv2ApplicationSection(_ELBv2Section):
             MetricDefinition("HTTPCode_ELB_503_Count", "Sum", "Count"),
             MetricDefinition("HTTPCode_ELB_504_Count", "Sum", "Count"),
             # Target health
-            MetricDefinition("HealthyHostCount", "Average", "Count"),
-            MetricDefinition("UnHealthyHostCount", "Average", "Count"),
+            MetricDefinition(
+                "HealthyHostCount",
+                "Average",
+                "Count",
+                extra_dimension="TargetGroup",
+                # Target groups report every minute while they exist; deleted ones
+                # stay listed for 2 weeks and would cost a call each refresh
+                skip_idle=True,
+            ),
+            MetricDefinition(
+                "UnHealthyHostCount",
+                "Average",
+                "Count",
+                extra_dimension="TargetGroup",
+                # Target groups report every minute while they exist; deleted ones
+                # stay listed for 2 weeks and would cost a call each refresh
+                skip_idle=True,
+            ),
             # Target connection errors
             MetricDefinition("TargetConnectionErrorCount", "Sum", "Count"),
             MetricDefinition("TargetTLSNegotiationErrorCount", "Sum", "Count"),
@@ -195,6 +210,22 @@ class ELBv2NetworkSection(_ELBv2Section):
             MetricDefinition("ClientTLSNegotiationErrorCount", "Sum", "Count"),
             MetricDefinition("TargetTLSNegotiationErrorCount", "Sum", "Count"),
             # Health
-            MetricDefinition("HealthyHostCount", "Average", "Count"),
-            MetricDefinition("UnHealthyHostCount", "Average", "Count"),
+            MetricDefinition(
+                "HealthyHostCount",
+                "Average",
+                "Count",
+                extra_dimension="TargetGroup",
+                # Target groups report every minute while they exist; deleted ones
+                # stay listed for 2 weeks and would cost a call each refresh
+                skip_idle=True,
+            ),
+            MetricDefinition(
+                "UnHealthyHostCount",
+                "Average",
+                "Count",
+                extra_dimension="TargetGroup",
+                # Target groups report every minute while they exist; deleted ones
+                # stay listed for 2 weeks and would cost a call each refresh
+                skip_idle=True,
+            ),
         ]

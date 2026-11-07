@@ -21,6 +21,9 @@ description:
 
  - Read/Write Latency: Calculated average latency per operation
 
+ Shown in the service details only (no thresholds, graphed):
+ Throughput percentage, consumed read/write ops.
+
  Thresholds can be configured for IOPS, throughput, queue length, and
  burst balance (lower bound).
 

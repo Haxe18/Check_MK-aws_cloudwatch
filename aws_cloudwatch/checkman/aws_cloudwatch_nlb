@@ -19,6 +19,10 @@ description:
 
  - TCP Reset Counts: Client, Target, and NLB initiated resets
 
+ Shown in the service details only (no thresholds, graphed):
+ Active flows, new flows and processed bytes per protocol
+ (TCP/UDP/TLS), processed packets, consumed LCUs, client/target TLS errors.
+
  Thresholds can be configured for active flows, new flows, processed bytes,
  and unhealthy targets.
 

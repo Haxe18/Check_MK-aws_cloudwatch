@@ -17,7 +17,7 @@ Monitors CloudWatch metrics using the cost-free GetMetricStatistics API (1M requ
 - **Smart Filtering**: Automatically filters out deleted resources (EC2, RDS, CloudFront Functions) to save API calls; Lambda/Lambda@Edge only when enabled (see [security note](#required-iam-permissions))
 - **Error Reporting**: Aggregates and displays API errors with IAM permission hints
 - **Smart Caching**: Config-aware cache invalidation when settings change
-- **Idle Lambda Skipping**: Lambda metrics without data in the past 3 hours (idle or deleted functions) are reported as 0 without a GetMetricStatistics call; one extra ListMetrics call (`RecentlyActive=PT3H`) per refresh decides which ones
+- **Idle Skipping**: Lambda metrics, DynamoDB latency and ALB/NLB target health without data in the past 3 hours (idle or deleted functions, idle operations, deleted target groups) are reported as 0 without a GetMetricStatistics call; one extra ListMetrics call (`RecentlyActive=PT3H`) per refresh decides which ones
 
 ## Supported Services
 
@@ -213,6 +213,13 @@ ListMetrics:   ~1,440 API calls/month
 Total:       ~416,160 API calls/month (41.6% of free tier)
 Cost:        $0.00
 ```
+
+Some metrics exist only together with a second dimension and are fetched once per value, then merged:
+- **ALB/NLB** `HealthyHostCount`/`UnHealthyHostCount`: one call per target group (values are summed; the unhealthy-targets levels apply to the worst target group, so one group that is down is not hidden by healthy ones)
+- **DynamoDB** `SuccessfulRequestLatency` (the slowest operation's average decides, so set the latency levels for your slowest operation, e.g. Scan) and `SystemErrors` (sum): one call per operation that ListMetrics returns (any operation with data in the last 2 weeks: GetItem, PutItem, Query, …)
+- **S3** `BucketSizeBytes` and `NumberOfObjects`: one call per storage type that ListMetrics returns (values are summed; AWS lists `NumberOfObjects` only under `AllStorageTypes`)
+
+For DynamoDB latency and ALB/NLB target health, values without data in the past 3 hours (idle operations, deleted target groups) count as 0 without a call; one extra ListMetrics call (`RecentlyActive=PT3H`) per refresh decides which ones. `SystemErrors` is fetched for every known operation on every refresh, so a burst on such an operation is not missed. Operations and target groups are learned during discovery (cached, default 1 hour): an operation that had no system errors in the last 2 weeks, or a new target group, is only fetched after the next discovery. A table with 5 operations, all active, therefore needs 10 calls for the two DynamoDB metrics on every refresh (~86,400 calls/month at 5-minute intervals); with 2 of them active, 7 calls plus the ListMetrics call.
 
 ## Architecture
 

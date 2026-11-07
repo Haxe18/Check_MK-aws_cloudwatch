@@ -12,6 +12,7 @@ from cmk.agent_based.v2 import CheckResult, Metric, Result, State
 from .aws_cloudwatch_helpers import (
     SERVICE_RDS,
     CheckConfig,
+    InfoMetricSpec,
     LevelsType,
     MetricSpec,
     RenderType,
@@ -84,6 +85,129 @@ RDS_METRIC_SPECS = [
     ),
 ]
 
+# Informational metrics, shown in the service details only
+RDS_INFO_METRICS = [
+    InfoMetricSpec(
+        metric_key="CPUCreditUsage_Average",
+        label="CPU Credit Usage",
+        metric_name="cpu_credit_usage",
+        render_type=RenderType.FLOAT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="CPUCreditBalance_Average",
+        label="CPU Credit Balance",
+        metric_name="cpu_credit_balance",
+        render_type=RenderType.FLOAT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="SwapUsage_Average",
+        label="Swap Usage",
+        metric_name="swap_usage",
+        render_type=RenderType.BYTES,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="FreeLocalStorage_Average",
+        label="Free Local Storage",
+        metric_name="free_local_storage",
+        render_type=RenderType.BYTES,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="DiskQueueDepth_Average",
+        label="Disk Queue Depth",
+        metric_name="disk_queue_depth",
+        render_type=RenderType.FLOAT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ReadThroughput_Average",
+        label="Read Throughput",
+        metric_name="read_throughput",
+        render_type=RenderType.BYTES_PER_SECOND,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="WriteThroughput_Average",
+        label="Write Throughput",
+        metric_name="write_throughput",
+        render_type=RenderType.BYTES_PER_SECOND,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="NetworkReceiveThroughput_Average",
+        label="Network Receive",
+        metric_name="network_receive_throughput",
+        render_type=RenderType.BYTES_PER_SECOND,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="NetworkTransmitThroughput_Average",
+        label="Network Transmit",
+        metric_name="network_transmit_throughput",
+        render_type=RenderType.BYTES_PER_SECOND,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="BurstBalance_Average",
+        label="Burst Balance",
+        metric_name="burst_balance",
+        render_type=RenderType.PERCENT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="EBSIOBalance%_Average",
+        label="EBS IO Balance",
+        metric_name="ebs_io_balance",
+        render_type=RenderType.PERCENT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="EBSByteBalance%_Average",
+        label="EBS Byte Balance",
+        metric_name="ebs_byte_balance",
+        render_type=RenderType.PERCENT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ReplicationSlotDiskUsage_Average",
+        label="Replication Slot Disk Usage",
+        metric_name="replication_slot_disk_usage",
+        render_type=RenderType.BYTES,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="CommitLatency_Average",
+        label="Commit Latency",
+        metric_name="commit_latency",
+        render_type=RenderType.MILLISECONDS,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="CommitThroughput_Average",
+        label="Commits per Second",
+        metric_name="commit_throughput",
+        render_type=RenderType.FLOAT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="AuroraBinlogReplicaLag_Average",
+        label="Aurora Binlog Replica Lag",
+        metric_name="aurora_binlog_replica_lag",
+        render_type=RenderType.TIMESPAN,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="AuroraReplicaLag_Average",
+        label="Aurora Replica Lag",
+        metric_name="aurora_replica_lag",
+        render_type=RenderType.MILLISECONDS,
+        details_only=True,
+    ),
+]
+
 
 def _check_rds_iops(
     metrics_found: dict[str, dict[str, Any]],
@@ -111,6 +235,7 @@ check_plugin_aws_cloudwatch_rds = create_cloudwatch_check(
         resource_type="instance",
         metric_prefix="rds",
         metric_specs=RDS_METRIC_SPECS,
+        info_metrics=RDS_INFO_METRICS,
         post_check_hook=_check_rds_iops,
     )
 )

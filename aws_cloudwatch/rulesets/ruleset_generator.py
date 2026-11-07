@@ -14,7 +14,7 @@ from cmk.rulesets.v1.form_specs import (
     TimeSpan,
     migrate_to_float_simple_levels,
 )
-from cmk.rulesets.v1.rule_specs import CheckParameters, HostCondition, Topic
+from cmk.rulesets.v1.rule_specs import CheckParameters, HostAndItemCondition, Topic
 
 from ..lib.threshold_types import LevelDirection, ThresholdDef, ThresholdType
 from .aws_cloudwatch_helpers import (
@@ -150,5 +150,7 @@ def generate_rule_spec(
         title=Title(f"AWS CloudWatch {service_name}"),
         topic=Topic.CLOUD,
         parameter_form=_parameter_form,
-        condition=HostCondition(),
+        condition=HostAndItemCondition(
+            item_title=Title(f"{service_name} resource (region and name)")
+        ),
     )

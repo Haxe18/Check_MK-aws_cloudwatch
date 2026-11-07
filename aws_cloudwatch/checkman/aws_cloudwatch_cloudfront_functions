@@ -1,0 +1,24 @@
+title: AWS CloudFront Function
+agents: aws
+catalog: cloud/aws
+license: WTFPL
+distribution: check_mk
+description:
+ This check monitors AWS CloudFront Functions metrics via CloudWatch.
+ Note: CloudFront Functions metrics are only available in the us-east-1 region.
+
+ Monitored metrics:
+
+ - Invocations: Number of function invocations
+
+ - Compute Utilization: Share of the allowed execution time used (percent)
+
+ - Execution Errors: Number of errors while running the function
+
+ - Validation Errors: Number of invalid results returned by the function
+
+ Thresholds can be configured for compute utilization, execution errors,
+ and validation errors.
+
+discovery:
+ One service is created for each CloudFront Function discovered.

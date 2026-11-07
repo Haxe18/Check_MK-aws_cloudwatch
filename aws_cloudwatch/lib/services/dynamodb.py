@@ -42,30 +42,18 @@ class DynamoDBSection(CloudWatchSection):
             MetricDefinition("ReadThrottleEvents", "Sum", "Count"),
             MetricDefinition("WriteThrottleEvents", "Sum", "Count"),
             # Latency metrics
-            MetricDefinition("SuccessfulRequestLatency", "Average", "Milliseconds"),
-            MetricDefinition("GetRecords.SuccessfulRequestLatency", "Average", "Milliseconds"),
-            # Error metrics
-            MetricDefinition("UserErrors", "Sum", "Count"),
-            MetricDefinition("SystemErrors", "Sum", "Count"),
+            MetricDefinition(
+                "SuccessfulRequestLatency",
+                "Average",
+                "Milliseconds",
+                extra_dimension="Operation",
+                combine="max",
+                # Operations used only now and then would cost a call each refresh
+                skip_idle=True,
+            ),
+            # Error metrics (no skip_idle: a fresh burst must not be missed)
+            MetricDefinition("SystemErrors", "Sum", "Count", extra_dimension="Operation"),
             MetricDefinition("ConditionalCheckFailedRequests", "Sum", "Count"),
             # Request metrics
-            MetricDefinition("ThrottledRequests", "Sum", "Count"),
             MetricDefinition("TransactionConflict", "Sum", "Count"),
-            # Item counts
-            MetricDefinition("ReturnedItemCount", "Sum", "Count"),
-            MetricDefinition("ReturnedRecordsCount", "Sum", "Count"),
-            # On-demand capacity
-            MetricDefinition("AccountMaxReads", "Maximum", "Count"),
-            MetricDefinition("AccountMaxTableLevelReads", "Maximum", "Count"),
-            MetricDefinition("AccountMaxWrites", "Maximum", "Count"),
-            MetricDefinition("AccountMaxTableLevelWrites", "Maximum", "Count"),
-            MetricDefinition(
-                "AccountProvisionedReadCapacityUtilization", "Average", "Percent"
-            ),
-            MetricDefinition(
-                "AccountProvisionedWriteCapacityUtilization", "Average", "Percent"
-            ),
-            # Global tables
-            MetricDefinition("ReplicationLatency", "Average", "Milliseconds"),
-            MetricDefinition("PendingReplicationCount", "Sum", "Count"),
         ]

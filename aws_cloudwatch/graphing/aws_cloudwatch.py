@@ -41,6 +41,9 @@ UNIT_TIME = Unit(TimeNotation())
 #: Milliseconds unit for latency metrics.
 UNIT_TIME_MS = Unit(DecimalNotation("ms"))
 
+#: Bytes per second unit with IEC notation.
+UNIT_BYTES_PER_SECOND = Unit(IECNotation("B/s"))
+
 # ===== CloudWatch API Counter Metrics =====
 #: These metrics track CloudWatch API usage against the 1M free tier limit.
 #: Used by the aws_cloudwatch_api_counter check plugin.
@@ -285,28 +288,12 @@ metric_dynamodb_consumed_write_capacity = Metric(
     color=Color.GREEN,
 )
 
-#: Requests failed due to user/client errors.
-metric_dynamodb_user_errors = Metric(
-    name="dynamodb_user_errors",
-    title=Title("DynamoDB User Errors"),
-    unit=UNIT_NUMBER,
-    color=Color.ORANGE,
-)
-
 #: Requests failed due to DynamoDB system errors.
 metric_dynamodb_system_errors = Metric(
     name="dynamodb_system_errors",
     title=Title("DynamoDB System Errors"),
     unit=UNIT_NUMBER,
     color=Color.RED,
-)
-
-#: Requests rejected due to exceeding provisioned throughput.
-metric_dynamodb_throttledrequests = Metric(
-    name="dynamodb_throttledrequests",
-    title=Title("DynamoDB Throttled Requests"),
-    unit=UNIT_NUMBER,
-    color=Color.DARK_RED,
 )
 
 #: Average latency for successful DynamoDB requests in milliseconds.
@@ -343,16 +330,16 @@ metric_rds_replica_lag = Metric(
 )
 
 #: RDS burst balance percentage.
-metric_rds_burstbalance = Metric(
-    name="rds_burstbalance",
+metric_rds_burst_balance = Metric(
+    name="rds_burst_balance",
     title=Title("RDS Burst Balance"),
     unit=UNIT_PERCENTAGE,
     color=Color.PURPLE,
 )
 
 #: RDS disk queue depth.
-metric_rds_diskqueuedepth = Metric(
-    name="rds_diskqueuedepth",
+metric_rds_disk_queue_depth = Metric(
+    name="rds_disk_queue_depth",
     title=Title("RDS Disk Queue Depth"),
     unit=UNIT_NUMBER,
     color=Color.CYAN,
@@ -392,8 +379,8 @@ metric_rds_write_iops = Metric(
 
 # ----- Extended EC2 Metrics -----
 #: EC2 CPU credit usage.
-metric_ec2_cpucreditusage = Metric(
-    name="ec2_cpucreditusage",
+metric_ec2_cpu_credit_usage = Metric(
+    name="ec2_cpu_credit_usage",
     title=Title("EC2 CPU Credit Usage"),
     unit=UNIT_NUMBER,
     color=Color.ORANGE,
@@ -518,7 +505,7 @@ metric_elb_unhealthy_hosts = Metric(
 metric_elb_latency = Metric(
     name="elb_latency",
     title=Title("ELB Latency"),
-    unit=UNIT_TIME,
+    unit=UNIT_TIME_MS,
     color=Color.PURPLE,
 )
 
@@ -535,7 +522,7 @@ metric_alb_request_count = Metric(
 metric_alb_response_time = Metric(
     name="alb_response_time",
     title=Title("ALB Target Response Time"),
-    unit=UNIT_TIME,
+    unit=UNIT_TIME_MS,
     color=Color.PURPLE,
 )
 
@@ -548,16 +535,16 @@ metric_alb_active_connections = Metric(
 )
 
 #: ALB new connection count.
-metric_elbv2_application_newconnectioncount = Metric(
-    name="elbv2_application_newconnectioncount",
+metric_alb_new_connections = Metric(
+    name="alb_new_connections",
     title=Title("ALB New Connections"),
     unit=UNIT_NUMBER,
     color=Color.GREEN,
 )
 
 #: ALB processed bytes.
-metric_elbv2_application_processedbytes = Metric(
-    name="elbv2_application_processedbytes",
+metric_alb_processed_bytes = Metric(
+    name="alb_processed_bytes",
     title=Title("ALB Processed Bytes"),
     unit=UNIT_BYTES,
     color=Color.DARK_BLUE,
@@ -675,4 +662,707 @@ metric_lambda_concurrent_executions = Metric(
     title=Title("Lambda Concurrent Executions"),
     unit=UNIT_NUMBER,
     color=Color.CYAN,
+)
+
+# ----- CloudFront: further metrics -----
+metric_cloudfront_cache_hit_rate = Metric(
+    name="cloudfront_cache_hit_rate",
+    title=Title("CloudFront Cache Hit Rate"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.BLUE,
+)
+
+metric_cloudfront_origin_latency = Metric(
+    name="cloudfront_origin_latency",
+    title=Title("CloudFront Origin Latency"),
+    unit=UNIT_TIME_MS,
+    color=Color.GREEN,
+)
+
+
+# ----- ALB: further metrics -----
+metric_alb_rejected_connections = Metric(
+    name="alb_rejected_connections",
+    title=Title("ALB Rejected Connections"),
+    unit=UNIT_NUMBER,
+    color=Color.BLUE,
+)
+
+metric_alb_client_tls_errors = Metric(
+    name="alb_client_tls_errors",
+    title=Title("ALB Client TLS Errors"),
+    unit=UNIT_NUMBER,
+    color=Color.GREEN,
+)
+
+metric_alb_target_tls_errors = Metric(
+    name="alb_target_tls_errors",
+    title=Title("ALB Target TLS Errors"),
+    unit=UNIT_NUMBER,
+    color=Color.ORANGE,
+)
+
+metric_alb_target_connection_errors = Metric(
+    name="alb_target_connection_errors",
+    title=Title("ALB Target Connection Errors"),
+    unit=UNIT_NUMBER,
+    color=Color.PURPLE,
+)
+
+metric_alb_httpcode_elb_3xx_count = Metric(
+    name="alb_httpcode_elb_3xx_count",
+    title=Title("ALB 3XX"),
+    unit=UNIT_NUMBER,
+    color=Color.CYAN,
+)
+
+metric_alb_httpcode_elb_500_count = Metric(
+    name="alb_httpcode_elb_500_count",
+    title=Title("ALB 500"),
+    unit=UNIT_NUMBER,
+    color=Color.RED,
+)
+
+metric_alb_httpcode_elb_502_count = Metric(
+    name="alb_httpcode_elb_502_count",
+    title=Title("ALB 502"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_BLUE,
+)
+
+metric_alb_httpcode_elb_503_count = Metric(
+    name="alb_httpcode_elb_503_count",
+    title=Title("ALB 503"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_GREEN,
+)
+
+metric_alb_httpcode_elb_504_count = Metric(
+    name="alb_httpcode_elb_504_count",
+    title=Title("ALB 504"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_ORANGE,
+)
+
+metric_alb_unhealthy_targets_pct = Metric(
+    name="alb_unhealthy_targets_pct",
+    title=Title("ALB Unhealthy Targets (%)"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.DARK_PURPLE,
+)
+
+metric_alb_httpcode_elb_4xx_count = Metric(
+    name="alb_httpcode_elb_4xx_count",
+    title=Title("ALB 4XX"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_RED,
+)
+
+metric_alb_httpcode_elb_5xx_count = Metric(
+    name="alb_httpcode_elb_5xx_count",
+    title=Title("ALB 5XX"),
+    unit=UNIT_NUMBER,
+    color=Color.LIGHT_BLUE,
+)
+
+metric_alb_httpcode_target_3xx_count = Metric(
+    name="alb_httpcode_target_3xx_count",
+    title=Title("ALB Target 3XX"),
+    unit=UNIT_NUMBER,
+    color=Color.LIGHT_GREEN,
+)
+
+
+# ----- NLB: further metrics -----
+metric_nlb_active_flows_tcp = Metric(
+    name="nlb_active_flows_tcp",
+    title=Title("NLB Active Flows TCP"),
+    unit=UNIT_NUMBER,
+    color=Color.BLUE,
+)
+
+metric_nlb_active_flows_udp = Metric(
+    name="nlb_active_flows_udp",
+    title=Title("NLB Active Flows UDP"),
+    unit=UNIT_NUMBER,
+    color=Color.GREEN,
+)
+
+metric_nlb_active_flows_tls = Metric(
+    name="nlb_active_flows_tls",
+    title=Title("NLB Active Flows TLS"),
+    unit=UNIT_NUMBER,
+    color=Color.ORANGE,
+)
+
+metric_nlb_new_flows_tcp = Metric(
+    name="nlb_new_flows_tcp",
+    title=Title("NLB New Flows TCP"),
+    unit=UNIT_NUMBER,
+    color=Color.PURPLE,
+)
+
+metric_nlb_new_flows_udp = Metric(
+    name="nlb_new_flows_udp",
+    title=Title("NLB New Flows UDP"),
+    unit=UNIT_NUMBER,
+    color=Color.CYAN,
+)
+
+metric_nlb_new_flows_tls = Metric(
+    name="nlb_new_flows_tls",
+    title=Title("NLB New Flows TLS"),
+    unit=UNIT_NUMBER,
+    color=Color.RED,
+)
+
+metric_nlb_processed_bytes_tcp = Metric(
+    name="nlb_processed_bytes_tcp",
+    title=Title("NLB Processed Bytes TCP"),
+    unit=UNIT_BYTES,
+    color=Color.DARK_BLUE,
+)
+
+metric_nlb_processed_bytes_udp = Metric(
+    name="nlb_processed_bytes_udp",
+    title=Title("NLB Processed Bytes UDP"),
+    unit=UNIT_BYTES,
+    color=Color.DARK_GREEN,
+)
+
+metric_nlb_processed_bytes_tls = Metric(
+    name="nlb_processed_bytes_tls",
+    title=Title("NLB Processed Bytes TLS"),
+    unit=UNIT_BYTES,
+    color=Color.DARK_ORANGE,
+)
+
+metric_nlb_processed_packets = Metric(
+    name="nlb_processed_packets",
+    title=Title("NLB Processed Packets"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_PURPLE,
+)
+
+metric_nlb_consumed_lcus = Metric(
+    name="nlb_consumed_lcus",
+    title=Title("NLB Consumed LCUs"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_RED,
+)
+
+metric_nlb_client_tls_errors = Metric(
+    name="nlb_client_tls_errors",
+    title=Title("NLB Client TLS Errors"),
+    unit=UNIT_NUMBER,
+    color=Color.LIGHT_BLUE,
+)
+
+metric_nlb_target_tls_errors = Metric(
+    name="nlb_target_tls_errors",
+    title=Title("NLB Target TLS Errors"),
+    unit=UNIT_NUMBER,
+    color=Color.LIGHT_GREEN,
+)
+
+metric_nlb_unhealthy_targets_pct = Metric(
+    name="nlb_unhealthy_targets_pct",
+    title=Title("NLB Unhealthy Targets (%)"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.BLUE,
+)
+
+metric_nlb_tcp_elb_reset_count = Metric(
+    name="nlb_tcp_elb_reset_count",
+    title=Title("NLB Resets"),
+    unit=UNIT_NUMBER,
+    color=Color.GREEN,
+)
+
+
+# ----- ELB: further metrics -----
+metric_elb_spillover_count = Metric(
+    name="elb_spillover_count",
+    title=Title("ELB Spillover"),
+    unit=UNIT_NUMBER,
+    color=Color.BLUE,
+)
+
+metric_elb_surge_queue_length = Metric(
+    name="elb_surge_queue_length",
+    title=Title("ELB Surge Queue Length"),
+    unit=UNIT_NUMBER,
+    color=Color.GREEN,
+)
+
+metric_elb_unhealthy_hosts_pct = Metric(
+    name="elb_unhealthy_hosts_pct",
+    title=Title("ELB Unhealthy Hosts (%)"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.ORANGE,
+)
+
+metric_elb_httpcode_elb_4xx = Metric(
+    name="elb_httpcode_elb_4xx",
+    title=Title("ELB 4XX"),
+    unit=UNIT_NUMBER,
+    color=Color.PURPLE,
+)
+
+metric_elb_httpcode_elb_5xx = Metric(
+    name="elb_httpcode_elb_5xx",
+    title=Title("ELB 5XX"),
+    unit=UNIT_NUMBER,
+    color=Color.CYAN,
+)
+
+metric_elb_httpcode_backend_4xx = Metric(
+    name="elb_httpcode_backend_4xx",
+    title=Title("ELB Backend 4XX"),
+    unit=UNIT_NUMBER,
+    color=Color.RED,
+)
+
+metric_elb_httpcode_backend_5xx = Metric(
+    name="elb_httpcode_backend_5xx",
+    title=Title("ELB Backend 5XX"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_BLUE,
+)
+
+metric_elb_httpcode_backend_2xx = Metric(
+    name="elb_httpcode_backend_2xx",
+    title=Title("ELB Backend 2XX"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_GREEN,
+)
+
+metric_elb_httpcode_backend_3xx = Metric(
+    name="elb_httpcode_backend_3xx",
+    title=Title("ELB Backend 3XX"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_ORANGE,
+)
+
+
+# ----- DynamoDB: further metrics -----
+metric_dynamodb_provisioned_read = Metric(
+    name="dynamodb_provisioned_read",
+    title=Title("DynamoDB Provisioned Read"),
+    unit=UNIT_NUMBER,
+    color=Color.BLUE,
+)
+
+metric_dynamodb_provisioned_write = Metric(
+    name="dynamodb_provisioned_write",
+    title=Title("DynamoDB Provisioned Write"),
+    unit=UNIT_NUMBER,
+    color=Color.GREEN,
+)
+
+metric_dynamodb_conditional_check_failed = Metric(
+    name="dynamodb_conditional_check_failed",
+    title=Title("DynamoDB Conditional Check Failed"),
+    unit=UNIT_NUMBER,
+    color=Color.ORANGE,
+)
+
+metric_dynamodb_transaction_conflicts = Metric(
+    name="dynamodb_transaction_conflicts",
+    title=Title("DynamoDB Transaction Conflicts"),
+    unit=UNIT_NUMBER,
+    color=Color.PURPLE,
+)
+
+metric_dynamodb_read_throttle_events = Metric(
+    name="dynamodb_read_throttle_events",
+    title=Title("DynamoDB Read Throttle Events"),
+    unit=UNIT_NUMBER,
+    color=Color.CYAN,
+)
+
+metric_dynamodb_write_throttle_events = Metric(
+    name="dynamodb_write_throttle_events",
+    title=Title("DynamoDB Write Throttle Events"),
+    unit=UNIT_NUMBER,
+    color=Color.RED,
+)
+
+
+# ----- EBS: further metrics -----
+metric_ebs_queue_length = Metric(
+    name="ebs_queue_length",
+    title=Title("EBS Queue Length"),
+    unit=UNIT_NUMBER,
+    color=Color.BLUE,
+)
+
+metric_ebs_idle_time = Metric(
+    name="ebs_idle_time",
+    title=Title("EBS Idle Time"),
+    unit=UNIT_TIME,
+    color=Color.GREEN,
+)
+
+metric_ebs_throughput_percentage = Metric(
+    name="ebs_throughput_percentage",
+    title=Title("EBS Throughput Percentage"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.ORANGE,
+)
+
+metric_ebs_consumed_read_write_ops = Metric(
+    name="ebs_consumed_read_write_ops",
+    title=Title("EBS Consumed Read/Write Ops"),
+    unit=UNIT_NUMBER,
+    color=Color.PURPLE,
+)
+
+metric_ebs_read_latency = Metric(
+    name="ebs_read_latency",
+    title=Title("EBS Read Latency"),
+    unit=UNIT_TIME_MS,
+    color=Color.CYAN,
+)
+
+metric_ebs_write_latency = Metric(
+    name="ebs_write_latency",
+    title=Title("EBS Write Latency"),
+    unit=UNIT_TIME_MS,
+    color=Color.RED,
+)
+
+
+# ----- EC2: further metrics -----
+metric_ec2_disk_read_ops = Metric(
+    name="ec2_disk_read_ops",
+    title=Title("EC2 Disk Read Ops"),
+    unit=UNIT_NUMBER,
+    color=Color.BLUE,
+)
+
+metric_ec2_disk_write_ops = Metric(
+    name="ec2_disk_write_ops",
+    title=Title("EC2 Disk Write Ops"),
+    unit=UNIT_NUMBER,
+    color=Color.GREEN,
+)
+
+metric_ec2_network_packets_in = Metric(
+    name="ec2_network_packets_in",
+    title=Title("EC2 Network Packets In"),
+    unit=UNIT_NUMBER,
+    color=Color.ORANGE,
+)
+
+metric_ec2_network_packets_out = Metric(
+    name="ec2_network_packets_out",
+    title=Title("EC2 Network Packets Out"),
+    unit=UNIT_NUMBER,
+    color=Color.PURPLE,
+)
+
+metric_ec2_ebs_read_ops = Metric(
+    name="ec2_ebs_read_ops",
+    title=Title("EC2 EBS Read Ops"),
+    unit=UNIT_NUMBER,
+    color=Color.CYAN,
+)
+
+metric_ec2_ebs_write_ops = Metric(
+    name="ec2_ebs_write_ops",
+    title=Title("EC2 EBS Write Ops"),
+    unit=UNIT_NUMBER,
+    color=Color.RED,
+)
+
+metric_ec2_ebs_read_bytes = Metric(
+    name="ec2_ebs_read_bytes",
+    title=Title("EC2 EBS Read"),
+    unit=UNIT_BYTES,
+    color=Color.DARK_BLUE,
+)
+
+metric_ec2_ebs_write_bytes = Metric(
+    name="ec2_ebs_write_bytes",
+    title=Title("EC2 EBS Write"),
+    unit=UNIT_BYTES,
+    color=Color.DARK_GREEN,
+)
+
+metric_ec2_status_check_failed_instance = Metric(
+    name="ec2_status_check_failed_instance",
+    title=Title("EC2 Instance Status Check Failed"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_ORANGE,
+)
+
+metric_ec2_status_check_failed_system = Metric(
+    name="ec2_status_check_failed_system",
+    title=Title("EC2 System Status Check Failed"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_PURPLE,
+)
+
+
+# ----- Lambda: further metrics -----
+metric_lambda_duration_minimum = Metric(
+    name="lambda_duration_minimum",
+    title=Title("Lambda Duration (Minimum)"),
+    unit=UNIT_TIME_MS,
+    color=Color.BLUE,
+)
+
+metric_lambda_iterator_age = Metric(
+    name="lambda_iterator_age",
+    title=Title("Lambda Iterator Age"),
+    unit=UNIT_TIME_MS,
+    color=Color.GREEN,
+)
+
+metric_lambda_dead_letter_errors = Metric(
+    name="lambda_dead_letter_errors",
+    title=Title("Lambda Dead Letter Errors"),
+    unit=UNIT_NUMBER,
+    color=Color.ORANGE,
+)
+
+metric_lambda_destination_delivery_failures = Metric(
+    name="lambda_destination_delivery_failures",
+    title=Title("Lambda Destination Delivery Failures"),
+    unit=UNIT_NUMBER,
+    color=Color.PURPLE,
+)
+
+metric_lambda_async_events_received = Metric(
+    name="lambda_async_events_received",
+    title=Title("Lambda Async Events Received"),
+    unit=UNIT_NUMBER,
+    color=Color.CYAN,
+)
+
+metric_lambda_async_event_age = Metric(
+    name="lambda_async_event_age",
+    title=Title("Lambda Async Event Age"),
+    unit=UNIT_TIME_MS,
+    color=Color.RED,
+)
+
+metric_lambda_async_events_dropped = Metric(
+    name="lambda_async_events_dropped",
+    title=Title("Lambda Async Events Dropped"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_BLUE,
+)
+
+metric_lambda_unreserved_concurrent_executions = Metric(
+    name="lambda_unreserved_concurrent_executions",
+    title=Title("Lambda Unreserved Concurrent Executions"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_GREEN,
+)
+
+metric_lambda_provisioned_concurrent_executions = Metric(
+    name="lambda_provisioned_concurrent_executions",
+    title=Title("Lambda Provisioned Concurrent Executions"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_ORANGE,
+)
+
+metric_lambda_provisioned_concurrency_invocations = Metric(
+    name="lambda_provisioned_concurrency_invocations",
+    title=Title("Lambda Provisioned Concurrency Invocations"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_PURPLE,
+)
+
+metric_lambda_provisioned_concurrency_spillover = Metric(
+    name="lambda_provisioned_concurrency_spillover",
+    title=Title("Lambda Provisioned Concurrency Spillover"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_RED,
+)
+
+metric_lambda_provisioned_concurrency_utilization = Metric(
+    name="lambda_provisioned_concurrency_utilization",
+    title=Title("Lambda Provisioned Concurrency Utilization"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.LIGHT_BLUE,
+)
+
+metric_lambda_memory_utilization = Metric(
+    name="lambda_memory_utilization",
+    title=Title("Lambda Memory Utilization"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.LIGHT_GREEN,
+)
+
+metric_lambda_total_memory = Metric(
+    name="lambda_total_memory",
+    title=Title("Lambda Total Memory"),
+    unit=UNIT_BYTES,
+    color=Color.BLUE,
+)
+
+metric_lambda_used_memory_max = Metric(
+    name="lambda_used_memory_max",
+    title=Title("Lambda Used Memory (Maximum)"),
+    unit=UNIT_BYTES,
+    color=Color.GREEN,
+)
+
+metric_lambda_cpu_total_time = Metric(
+    name="lambda_cpu_total_time",
+    title=Title("Lambda CPU Time"),
+    unit=UNIT_TIME_MS,
+    color=Color.ORANGE,
+)
+
+metric_lambda_tx_bytes = Metric(
+    name="lambda_tx_bytes",
+    title=Title("Lambda Network Sent"),
+    unit=UNIT_BYTES,
+    color=Color.PURPLE,
+)
+
+metric_lambda_rx_bytes = Metric(
+    name="lambda_rx_bytes",
+    title=Title("Lambda Network Received"),
+    unit=UNIT_BYTES,
+    color=Color.CYAN,
+)
+
+metric_lambda_init_duration = Metric(
+    name="lambda_init_duration",
+    title=Title("Lambda Init Duration"),
+    unit=UNIT_TIME_MS,
+    color=Color.RED,
+)
+
+metric_lambda_cold_starts = Metric(
+    name="lambda_cold_starts",
+    title=Title("Lambda Cold Starts"),
+    unit=UNIT_NUMBER,
+    color=Color.DARK_BLUE,
+)
+
+metric_lambda_tmp_used = Metric(
+    name="lambda_tmp_used",
+    title=Title("Lambda Temp Space Used"),
+    unit=UNIT_BYTES,
+    color=Color.DARK_GREEN,
+)
+
+metric_lambda_tmp_max = Metric(
+    name="lambda_tmp_max",
+    title=Title("Lambda Temp Space Available"),
+    unit=UNIT_BYTES,
+    color=Color.DARK_ORANGE,
+)
+
+
+# ----- RDS: further metrics -----
+metric_rds_cpu_credit_usage = Metric(
+    name="rds_cpu_credit_usage",
+    title=Title("RDS CPU Credit Usage"),
+    unit=UNIT_NUMBER,
+    color=Color.BLUE,
+)
+
+metric_rds_cpu_credit_balance = Metric(
+    name="rds_cpu_credit_balance",
+    title=Title("RDS CPU Credit Balance"),
+    unit=UNIT_NUMBER,
+    color=Color.GREEN,
+)
+
+metric_rds_swap_usage = Metric(
+    name="rds_swap_usage",
+    title=Title("RDS Swap Usage"),
+    unit=UNIT_BYTES,
+    color=Color.ORANGE,
+)
+
+metric_rds_free_local_storage = Metric(
+    name="rds_free_local_storage",
+    title=Title("RDS Free Local Storage"),
+    unit=UNIT_BYTES,
+    color=Color.PURPLE,
+)
+
+metric_rds_read_throughput = Metric(
+    name="rds_read_throughput",
+    title=Title("RDS Read Throughput"),
+    unit=UNIT_BYTES_PER_SECOND,
+    color=Color.CYAN,
+)
+
+metric_rds_write_throughput = Metric(
+    name="rds_write_throughput",
+    title=Title("RDS Write Throughput"),
+    unit=UNIT_BYTES_PER_SECOND,
+    color=Color.RED,
+)
+
+metric_rds_network_receive_throughput = Metric(
+    name="rds_network_receive_throughput",
+    title=Title("RDS Network Receive"),
+    unit=UNIT_BYTES_PER_SECOND,
+    color=Color.DARK_BLUE,
+)
+
+metric_rds_network_transmit_throughput = Metric(
+    name="rds_network_transmit_throughput",
+    title=Title("RDS Network Transmit"),
+    unit=UNIT_BYTES_PER_SECOND,
+    color=Color.DARK_GREEN,
+)
+
+metric_rds_ebs_io_balance = Metric(
+    name="rds_ebs_io_balance",
+    title=Title("RDS EBS IO Balance"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.DARK_ORANGE,
+)
+
+metric_rds_ebs_byte_balance = Metric(
+    name="rds_ebs_byte_balance",
+    title=Title("RDS EBS Byte Balance"),
+    unit=UNIT_PERCENTAGE,
+    color=Color.DARK_PURPLE,
+)
+
+metric_rds_replication_slot_disk_usage = Metric(
+    name="rds_replication_slot_disk_usage",
+    title=Title("RDS Replication Slot Disk Usage"),
+    unit=UNIT_BYTES,
+    color=Color.DARK_RED,
+)
+
+metric_rds_commit_latency = Metric(
+    name="rds_commit_latency",
+    title=Title("RDS Commit Latency"),
+    unit=UNIT_TIME_MS,
+    color=Color.LIGHT_BLUE,
+)
+
+metric_rds_commit_throughput = Metric(
+    name="rds_commit_throughput",
+    title=Title("RDS Commits per Second"),
+    unit=UNIT_NUMBER,
+    color=Color.LIGHT_GREEN,
+)
+
+metric_rds_aurora_binlog_replica_lag = Metric(
+    name="rds_aurora_binlog_replica_lag",
+    title=Title("RDS Aurora Binlog Replica Lag"),
+    unit=UNIT_TIME,
+    color=Color.BLUE,
+)
+
+metric_rds_aurora_replica_lag = Metric(
+    name="rds_aurora_replica_lag",
+    title=Title("RDS Aurora Replica Lag"),
+    unit=UNIT_TIME_MS,
+    color=Color.GREEN,
 )

@@ -263,6 +263,34 @@ def collect_metrics_for_item(
     return metrics_found
 
 
+def _worst_target_group(
+    metrics_found: dict[str, dict[str, Any]],
+) -> tuple[str, float, float] | None:
+    """Return (target group, unhealthy, total) of the group with the highest unhealthy share.
+
+    Uses the per-target-group values ("parts") the agent sends for ALB/NLB.
+    Groups without targets (e.g. deleted ones still listed by AWS) are skipped.
+
+    Returns:
+        The worst target group, or None without per-group values (Classic ELB,
+        older agent output) or when no group has targets
+    """
+    healthy_parts = metrics_found.get("HealthyHostCount_Average", {}).get("parts")
+    unhealthy_parts = metrics_found.get("UnHealthyHostCount_Average", {}).get("parts")
+    if not healthy_parts or not unhealthy_parts:
+        return None
+
+    worst: tuple[str, float, float] | None = None
+    for target_group in sorted(healthy_parts.keys() | unhealthy_parts.keys()):
+        unhealthy = float(unhealthy_parts.get(target_group, 0))
+        total = float(healthy_parts.get(target_group, 0)) + unhealthy
+        if total <= 0:
+            continue
+        if worst is None or unhealthy / total > worst[1] / worst[2]:
+            worst = (target_group, unhealthy, total)
+    return worst
+
+
 def check_healthy_unhealthy_targets(
     metrics_found: dict[str, dict[str, Any]],
     params: dict[str, Any],
@@ -279,31 +307,53 @@ def check_healthy_unhealthy_targets(
         levels_param: Parameter key for unhealthy levels (default: "unhealthy_targets_levels")
         label_type: Label for output (e.g., "Targets" or "Hosts")
 
+    With per-target-group values (ALB/NLB) the levels apply to the worst target
+    group, so one group that is completely down is not hidden by healthy ones.
+    The graphed percentage stays the share over all target groups.
+
     Yields:
         Results and Metrics for healthy/unhealthy state
     """
-    healthy = 0.0
-    unhealthy = 0.0
+    # AWS publishes both together; one missing usually means its fetch failed (the
+    # agent shows that error). Treating it as 0 would report 100% healthy or unhealthy.
+    if (
+        "HealthyHostCount_Average" not in metrics_found
+        or "UnHealthyHostCount_Average" not in metrics_found
+    ):
+        return
 
-    if "HealthyHostCount_Average" in metrics_found:
-        metric = metrics_found["HealthyHostCount_Average"]
-        healthy = metric.get("value", 0)
-
-    if "UnHealthyHostCount_Average" in metrics_found:
-        metric = metrics_found["UnHealthyHostCount_Average"]
-        unhealthy = metric.get("value", 0)
+    healthy = metrics_found["HealthyHostCount_Average"].get("value", 0)
+    unhealthy = metrics_found["UnHealthyHostCount_Average"].get("value", 0)
 
     if healthy > 0 or unhealthy > 0:
-        total = healthy + unhealthy
-        if total > 0:
-            unhealthy_pct = (unhealthy / total) * 100
+        unhealthy_pct = (unhealthy / (healthy + unhealthy)) * 100
+        pct_metric_name = f"{metric_prefix}_unhealthy_{label_type.lower()}_pct"
+        worst = _worst_target_group(metrics_found)
+        # All target groups healthy: no group worth naming, the total says it all
+        if worst is None or worst[1] == 0:
             yield from check_levels(
                 unhealthy_pct,
                 levels_upper=params.get(levels_param),
-                metric_name=f"{metric_prefix}_unhealthy_{label_type.lower()}_pct",
+                metric_name=pct_metric_name,
                 label=f"Unhealthy {label_type}",
                 render_func=lambda v: f"{v:.1f}%",
             )
+        else:
+            target_group, group_unhealthy, group_total = worst
+            # "targetgroup/<name>/<id>" -> "<name>"
+            group_name = (
+                target_group.split("/")[1] if target_group.count("/") == 2 else target_group
+            )
+            yield from check_levels(
+                group_unhealthy / group_total * 100,
+                levels_upper=params.get(levels_param),
+                label=(
+                    f"Unhealthy {label_type} in worst target group {group_name} "
+                    f"({group_unhealthy:.0f}/{group_total:.0f})"
+                ),
+                render_func=lambda v: f"{v:.1f}%",
+            )
+            yield Metric(pct_metric_name, unhealthy_pct)
         yield Result(
             state=State.OK,
             summary=f"{label_type}: {healthy:.0f} healthy, {unhealthy:.0f} unhealthy",
@@ -406,6 +456,7 @@ class RenderType(Enum):
 
     PERCENT = "percent"  # e.g., "45.1%"
     BYTES = "bytes"  # e.g., "1.5 GB"
+    BYTES_PER_SECOND = "bytes_per_second"  # e.g., "1.5 MB/s"
     TIMESPAN = "timespan"  # e.g., "5 minutes"
     FLOAT = "float"  # e.g., "123.45"
     INTEGER = "integer"  # e.g., "123"
@@ -420,6 +471,7 @@ def get_render_func(render_type: RenderType) -> Callable[[float], str]:
     render_funcs: dict[RenderType, Callable[[float], str]] = {
         RenderType.PERCENT: lambda v: f"{v:.1f}%",
         RenderType.BYTES: render.bytes,
+        RenderType.BYTES_PER_SECOND: render.iobandwidth,
         RenderType.TIMESPAN: render.timespan,
         RenderType.FLOAT: lambda v: f"{v:.2f}",
         RenderType.INTEGER: lambda v: f"{v:.0f}",
@@ -466,6 +518,9 @@ class InfoMetricSpec:
         metric_name: Metric name for Checkmk (without prefix)
         render_type: How to render the value for display
         state_func: Optional function to determine state from value
+        value_transform: Optional function to transform value before display
+        details_only: Show the value in the service details only, not in the summary
+            (a state other than OK from state_func still reaches the summary)
     """
 
     metric_key: str
@@ -473,6 +528,8 @@ class InfoMetricSpec:
     metric_name: str
     render_type: RenderType = RenderType.INTEGER
     state_func: Callable[[float], State] | None = None
+    value_transform: Callable[[float], float] | None = None
+    details_only: bool = False
 
 
 @dataclass
@@ -549,6 +606,11 @@ class MetricProcessor:
                 render_func=render_func,
             )
         elif spec.levels_type == LevelsType.LOWER:
+            # Without a datapoint (stopped instance, no requests) the agent sends 0
+            # with timestamp None. That is not a real 0: lower levels must not fire.
+            if "timestamp" in metric and metric["timestamp"] is None:
+                yield Result(state=State.OK, summary=f"{spec.label}: no data")
+                return
             yield from check_levels(
                 value,
                 levels_lower=self.params.get(spec.param_key) if spec.param_key else None,
@@ -564,6 +626,8 @@ class MetricProcessor:
 
         metric = self.metrics_found[spec.metric_key]
         value = metric.get("value", 0)
+        if spec.value_transform:
+            value = spec.value_transform(value)
         render_func = get_render_func(spec.render_type)
         full_metric_name = f"{self.metric_prefix}_{spec.metric_name}"
 
@@ -571,7 +635,11 @@ class MetricProcessor:
         if spec.state_func:
             state = spec.state_func(value)
 
-        yield Result(state=state, summary=f"{spec.label}: {render_func(value)}")
+        text = f"{spec.label}: {render_func(value)}"
+        if spec.details_only:
+            yield Result(state=state, notice=text)
+        else:
+            yield Result(state=state, summary=text)
         yield Metric(full_metric_name, value)
 
     def process_all(

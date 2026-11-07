@@ -19,11 +19,21 @@ description:
 
  - Concurrent Executions: Maximum concurrent executions
 
- Also collects metrics from Lambda Insights if enabled.
+ With the "Lambda Insights" service enabled in the agent rule (needs the
+ Lambda Insights extension on the function), memory utilization, total and
+ used memory, CPU time, network bytes, init duration and /tmp usage are shown
+ in the service details as well.
+
+ Shown in the service details only (no thresholds, graphed):
+ Minimum duration, iterator age, dead letter errors,
+ destination delivery failures, async events (received, age, dropped) and
+ provisioned concurrency (executions, invocations, spillover, utilization).
 
  Thresholds can be configured for duration, errors, throttles,
  invocations, and concurrent executions.
 
 discovery:
  One service is created for each active Lambda function discovered.
- Deleted functions are automatically filtered out using the Lambda API.
+ Deleted functions stay until CloudWatch stops listing their metrics (up to
+ 2 weeks). They are hidden right away only with "Lambda: Hide deleted functions
+ immediately" enabled in the agent rule (needs lambda:ListFunctions).

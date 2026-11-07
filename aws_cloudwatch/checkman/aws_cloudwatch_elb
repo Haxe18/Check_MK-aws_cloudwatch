@@ -17,6 +17,9 @@ description:
 
  - HTTP Error Codes: ELB 4XX/5XX and Backend 4XX/5XX counts
 
+ Shown in the service details only (no thresholds, graphed):
+ Spillover count, surge queue length.
+
  Thresholds can be configured for latency and unhealthy host count.
 
 discovery:

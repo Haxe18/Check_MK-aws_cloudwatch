@@ -166,6 +166,13 @@ def _valuespec_special_agents_aws_cloudwatch() -> Dictionary:
                                                 "Lambda (Invocations, Errors, Duration) - includes Lambda@Edge"
                                             ),
                                         ),
+                                        MultipleChoiceElement(
+                                            name="lambda_insights",
+                                            title=Title(
+                                                "Lambda Insights (Memory, CPU Time, Network) - "
+                                                "needs the Lambda Insights extension"
+                                            ),
+                                        ),
                                         # Database
                                         MultipleChoiceElement(
                                             name="rds",

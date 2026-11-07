@@ -19,6 +19,10 @@ description:
 
  - Active Connection Count: Current active connections
 
+ Shown in the service details only (no thresholds, graphed):
+ New and rejected connections, processed bytes, client/target TLS
+ errors, target connection errors, ALB 3XX and ALB 500/502/503/504 counts.
+
  Thresholds can be configured for response time, unhealthy targets, and
  active connections.
 

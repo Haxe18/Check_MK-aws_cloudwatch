@@ -64,7 +64,6 @@ CLOUDFRONT_METRIC_SPECS = [
         param_key="origin_latency_levels",
         render_type=RenderType.MILLISECONDS,
         levels_type=LevelsType.UPPER,
-        value_transform=lambda v: v * 1000,  # CloudWatch seconds -> ms for thresholds
     ),
     MetricSpec(
         metric_key="BytesDownloaded_Sum",

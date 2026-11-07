@@ -89,6 +89,56 @@ EC2_INFO_METRICS = [
         metric_name="disk_write_bytes",
         render_type=RenderType.BYTES,
     ),
+    # Shown in the service details only
+    InfoMetricSpec(
+        metric_key="CPUCreditUsage_Average",
+        label="CPU Credit Usage",
+        metric_name="cpu_credit_usage",
+        render_type=RenderType.FLOAT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="NetworkPacketsIn_Sum",
+        label="Network Packets In",
+        metric_name="network_packets_in",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="NetworkPacketsOut_Sum",
+        label="Network Packets Out",
+        metric_name="network_packets_out",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="EBSReadOps_Sum",
+        label="EBS Read Ops",
+        metric_name="ebs_read_ops",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="EBSWriteOps_Sum",
+        label="EBS Write Ops",
+        metric_name="ebs_write_ops",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="EBSReadBytes_Sum",
+        label="EBS Read",
+        metric_name="ebs_read_bytes",
+        render_type=RenderType.BYTES,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="EBSWriteBytes_Sum",
+        label="EBS Write",
+        metric_name="ebs_write_bytes",
+        render_type=RenderType.BYTES,
+        details_only=True,
+    ),
 ]
 
 

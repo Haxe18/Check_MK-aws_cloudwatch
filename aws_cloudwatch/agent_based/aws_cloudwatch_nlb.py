@@ -12,6 +12,7 @@ from cmk.agent_based.v2 import CheckResult, Metric, Result, State
 from .aws_cloudwatch_helpers import (
     SERVICE_NLB,
     CheckConfig,
+    InfoMetricSpec,
     LevelsType,
     MetricSpec,
     RenderType,
@@ -50,6 +51,101 @@ NLB_METRIC_SPECS = [
     ),
 ]
 
+# Informational metrics, shown in the service details only
+NLB_INFO_METRICS = [
+    InfoMetricSpec(
+        metric_key="ActiveFlowCount_TCP_Average",
+        label="Active Flows TCP",
+        metric_name="active_flows_tcp",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ActiveFlowCount_UDP_Average",
+        label="Active Flows UDP",
+        metric_name="active_flows_udp",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ActiveFlowCount_TLS_Average",
+        label="Active Flows TLS",
+        metric_name="active_flows_tls",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="NewFlowCount_TCP_Sum",
+        label="New Flows TCP",
+        metric_name="new_flows_tcp",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="NewFlowCount_UDP_Sum",
+        label="New Flows UDP",
+        metric_name="new_flows_udp",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="NewFlowCount_TLS_Sum",
+        label="New Flows TLS",
+        metric_name="new_flows_tls",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ProcessedBytes_TCP_Sum",
+        label="Processed Bytes TCP",
+        metric_name="processed_bytes_tcp",
+        render_type=RenderType.BYTES,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ProcessedBytes_UDP_Sum",
+        label="Processed Bytes UDP",
+        metric_name="processed_bytes_udp",
+        render_type=RenderType.BYTES,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ProcessedBytes_TLS_Sum",
+        label="Processed Bytes TLS",
+        metric_name="processed_bytes_tls",
+        render_type=RenderType.BYTES,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ProcessedPackets_Sum",
+        label="Processed Packets",
+        metric_name="processed_packets",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ConsumedLCUs_Average",
+        label="Consumed LCUs",
+        metric_name="consumed_lcus",
+        render_type=RenderType.FLOAT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="ClientTLSNegotiationErrorCount_Sum",
+        label="Client TLS Errors",
+        metric_name="client_tls_errors",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="TargetTLSNegotiationErrorCount_Sum",
+        label="Target TLS Errors",
+        metric_name="target_tls_errors",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+]
+
 
 def _check_nlb_special(
     metrics_found: dict[str, dict[str, Any]],
@@ -84,6 +180,7 @@ check_plugin_aws_cloudwatch_nlb = create_cloudwatch_check(
         resource_type="load balancer",
         metric_prefix="nlb",
         metric_specs=NLB_METRIC_SPECS,
+        info_metrics=NLB_INFO_METRICS,
         post_check_hook=_check_nlb_special,
     )
 )

@@ -53,6 +53,21 @@ ELB_INFO_METRICS = [
         metric_name="request_count",
         render_type=RenderType.INTEGER,
     ),
+    # Shown in the service details only
+    InfoMetricSpec(
+        metric_key="SpilloverCount_Sum",
+        label="Spillover",
+        metric_name="spillover_count",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="SurgeQueueLength_Maximum",
+        label="Surge Queue Length",
+        metric_name="surge_queue_length",
+        render_type=RenderType.INTEGER,
+        details_only=True,
+    ),
 ]
 
 

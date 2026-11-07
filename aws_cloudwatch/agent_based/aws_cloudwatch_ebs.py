@@ -81,7 +81,22 @@ EBS_INFO_METRICS = [
         metric_key="VolumeIdleTime_Sum",
         label="Idle Time",
         metric_name="idle_time",
-        render_type=RenderType.FLOAT,
+        render_type=RenderType.TIMESPAN,
+    ),
+    # Shown in the service details only
+    InfoMetricSpec(
+        metric_key="VolumeThroughputPercentage_Average",
+        label="Throughput Percentage",
+        metric_name="throughput_percentage",
+        render_type=RenderType.PERCENT,
+        details_only=True,
+    ),
+    InfoMetricSpec(
+        metric_key="VolumeConsumedReadWriteOps_Sum",
+        label="Consumed Read/Write Ops",
+        metric_name="consumed_read_write_ops",
+        render_type=RenderType.INTEGER,
+        details_only=True,
     ),
 ]
 

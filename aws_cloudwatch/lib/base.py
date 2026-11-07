@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 
 logger = get_logger("base")
 
+# Time window of ListMetrics RecentlyActive=PT3H
+RECENTLY_ACTIVE_SECONDS = 3 * 3600
+
 
 class CloudWatchSection(ABC):
     """Abstract base class for AWS CloudWatch metric sections.
@@ -48,6 +51,9 @@ class CloudWatchSection(ABC):
         self._client = client
         self._api_counter = api_counter
         self._error_collector = error_collector
+        # (resource id, metric name, extra-dimension value or "") with data in the past
+        # 3 hours, for skip_idle metrics; None = unknown, fetch everything
+        self._active_combos: set[tuple[str, str, str]] | None = None
 
     @property
     @abstractmethod
@@ -134,6 +140,7 @@ class CloudWatchSection(ABC):
                 )
 
         resources: dict[str, Resource] = {}
+        extra_dimensions = self._extra_dimensions()
 
         for metric_info in metrics_list:
             resource = self._extract_resource(metric_info)
@@ -143,6 +150,15 @@ class CloudWatchSection(ABC):
                     resources[resource.id] = resource
                 if metric_name not in resources[resource.id].available_metrics:
                     resources[resource.id].available_metrics.append(metric_name)
+                combo = self._extra_dimension_combo(
+                    metric_info, extra_dimensions.get(metric_name)
+                )
+                if combo:
+                    combos = resources[resource.id].metric_dimensions.setdefault(
+                        metric_name, []
+                    )
+                    if combo not in combos:
+                        combos.append(combo)
             else:
                 # Log why extraction failed
                 dims = metric_info.get("Dimensions", [])
@@ -371,6 +387,194 @@ class CloudWatchSection(ABC):
 
         return None
 
+    def _fetch_combined_metric(
+        self,
+        resource: Resource,
+        metric: MetricDefinition,
+        start_time: datetime,
+        end_time: datetime,
+        period: int,
+    ) -> MetricResult | None:
+        """Fetch a metric once per extra-dimension combination and merge the values.
+
+        Returns None when no combination is known or any single fetch failed
+        (the error is already collected; a partial sum would be wrong).
+        """
+        combos = resource.metric_dimensions.get(metric.name, [])
+        if not combos:
+            logger.debug(
+                "[%s] No %s values known for %s on %s, skipping",
+                self.name,
+                metric.extra_dimension,
+                metric.name,
+                resource.id,
+            )
+            return None
+
+        parts: dict[str, float] = {}
+        timestamps: list[str] = []
+        for combo in combos:
+            extra_value = combo[metric.extra_dimension]
+            if self._is_idle(resource, metric, extra_value):
+                parts.setdefault(extra_value, 0.0)
+                continue
+            part = Resource(
+                id=resource.id,
+                dimensions={**resource.dimensions, **combo},
+                available_metrics=[metric.name],
+            )
+            result = self.fetch_metric(part, metric, start_time, end_time, period)
+            if result is None:
+                return None
+            value = float(result.value)
+            # The same value can come twice (target group listed under an old and a
+            # recreated load balancer): merge instead of overwriting
+            if extra_value in parts:
+                previous = parts[extra_value]
+                value = max(previous, value) if metric.combine == "max" else previous + value
+            parts[extra_value] = value
+            if result.timestamp:
+                timestamps.append(result.timestamp)
+
+        values = parts.values()
+        value = max(values) if metric.combine == "max" else sum(values)
+        return MetricResult(
+            resource_id=resource.id,
+            metric_name=metric.name,
+            value=value,
+            unit=metric.unit,
+            stat=metric.stat,
+            timestamp=max(timestamps) if timestamps else None,
+            period=period,
+            region=self._client.region,
+            parts=parts,
+        )
+
+    def _extra_dimensions(self) -> dict[str, str]:
+        """Return metric name -> extra dimension for metrics with extra_dimension."""
+        return {m.name: m.extra_dimension for m in self.metrics if m.extra_dimension}
+
+    def _extra_dimension_combo(
+        self, metric_info: dict, extra_dimension: str | None
+    ) -> dict[str, str] | None:
+        """Return the dimensions of a listed metric if they are its extra-dimension pair.
+
+        Only the exact pair counts, e.g. LoadBalancer+TargetGroup without the
+        AvailabilityZone variant. The full primary value is kept: ALB/NLB resources
+        are keyed by name only, a recreated load balancer has a new LoadBalancer value.
+
+        Args:
+            metric_info: Metric information from list_metrics
+            extra_dimension: The metric's extra dimension (from _extra_dimensions()),
+                None for metrics without one
+
+        Returns:
+            {primary dimension: value, extra dimension: value}, or None for metrics
+            without extra_dimension or with other dimension sets
+        """
+        if not extra_dimension:
+            return None
+        dims = {d["Name"]: d["Value"] for d in metric_info.get("Dimensions", [])}
+        if set(dims) != {self.dimension_key, extra_dimension}:
+            return None
+        return dims
+
+    def _is_idle(
+        self, resource: Resource, metric: MetricDefinition, extra_value: str = ""
+    ) -> bool:
+        """Tell whether a skip_idle metric had no data in the past 3 hours.
+
+        Such a metric counts as 0, as AWS would answer, without a call.
+
+        Args:
+            resource: Resource the metric belongs to
+            metric: Metric definition
+            extra_value: Extra-dimension value, "" for metrics without extra_dimension
+
+        Returns:
+            True when the call can be skipped
+        """
+        if (
+            not metric.skip_idle
+            or self._active_combos is None
+            or (resource.id, metric.name, extra_value) in self._active_combos
+        ):
+            return False
+        logger.debug(
+            "[%s] Skipping %s for %s %s: no data in the past 3 hours",
+            self.name,
+            metric.name,
+            resource.id,
+            extra_value,
+        )
+        return True
+
+    def _list_recently_active(self) -> list[dict] | None:
+        """List the metrics with data in the past 3 hours (ListMetrics RecentlyActive=PT3H).
+
+        Returns:
+            The listed metrics, or None on error (the error is collected with IAM
+            hint; the caller then fetches everything)
+        """
+        try:
+            response = self._client.list_metrics(self.namespace, recently_active=True)
+        except (BotoCoreError, ClientError) as err:
+            hint = get_permission_hint(err, "list_metrics")
+            if self._error_collector:
+                self._error_collector.add(
+                    category="metrics",
+                    service=self.name,
+                    region=self._client.region,
+                    message=(
+                        "Could not list recently active metrics, fetching all "
+                        f"(more API calls): {err}"
+                    ),
+                    hint=hint,
+                )
+            logger.warning(
+                "[%s] Could not list recently active metrics, fetching all: %s",
+                self.name,
+                err,
+            )
+            return None
+        self._api_counter.increment(
+            response.get("PageCount", 1), service=self.name, api_type="list_metrics"
+        )
+        return response.get("Metrics", [])
+
+    def _list_active_combos(self) -> set[tuple[str, str, str]] | None:
+        """List the metric combinations with data in the past 3 hours.
+
+        Combinations missing from the result (idle functions or operations, deleted
+        target groups) are not fetched.
+
+        Returns:
+            Set of (resource id, metric name, extra-dimension value or ""), or None on
+            error (then everything is fetched)
+        """
+        metrics_list = self._list_recently_active()
+        if metrics_list is None:
+            return None
+
+        extra_dimensions = self._extra_dimensions()
+        active: set[tuple[str, str, str]] = set()
+        for metric_info in metrics_list:
+            resource = self._extract_resource(metric_info)
+            if not resource:
+                continue
+            metric_name = metric_info["MetricName"]
+            extra_dimension = extra_dimensions.get(metric_name)
+            if not extra_dimension:
+                active.add((resource.id, metric_name, ""))
+                continue
+            combo = self._extra_dimension_combo(metric_info, extra_dimension)
+            if combo:
+                active.add((resource.id, metric_name, combo[extra_dimension]))
+        logger.debug(
+            "[%s] %d metric combinations active in the past 3 hours", self.name, len(active)
+        )
+        return active
+
     def fetch_all_metrics(
         self, resources: list[Resource], period: int = 300
     ) -> list[MetricResult]:
@@ -400,6 +604,19 @@ class CloudWatchSection(ABC):
             query_period,
         )
 
+        self._active_combos = None
+        # RecentlyActive only covers 3 hours; a longer lookback (S3) could miss real data.
+        # Without a skip_idle metric to fetch there is nothing to skip.
+        skip_idle = [m for m in self.metrics if m.skip_idle]
+        if lookback_seconds <= RECENTLY_ACTIVE_SECONDS and any(
+            resource.metric_dimensions.get(m.name)
+            if m.extra_dimension
+            else m.name in resource.available_metrics
+            for resource in resources
+            for m in skip_idle
+        ):
+            self._active_combos = self._list_active_combos()
+
         results: list[MetricResult] = []
         configured_metric_names = [m.name for m in self.metrics]
         logger.debug("[%s] Configured metrics: %s", self.name, configured_metric_names)
@@ -420,13 +637,29 @@ class CloudWatchSection(ABC):
                         metric.name,
                         resource.id,
                     )
-                    result = self.fetch_metric(
-                        resource,
-                        metric,
-                        start_time,
-                        end_time,
-                        query_period,
-                    )
+                    if metric.extra_dimension:
+                        result = self._fetch_combined_metric(
+                            resource, metric, start_time, end_time, query_period
+                        )
+                    elif self._is_idle(resource, metric):
+                        result = MetricResult(
+                            resource_id=resource.id,
+                            metric_name=metric.name,
+                            value=0,
+                            unit=metric.unit,
+                            stat=metric.stat,
+                            timestamp=None,
+                            period=query_period,
+                            region=self._client.region,
+                        )
+                    else:
+                        result = self.fetch_metric(
+                            resource,
+                            metric,
+                            start_time,
+                            end_time,
+                            query_period,
+                        )
                     if result:
                         results.append(result)
                         logger.debug(

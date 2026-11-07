@@ -80,7 +80,7 @@ class CloudFrontSection(CloudWatchSection):
             MetricDefinition("4xxErrorRate", "Average", "Percent"),
             MetricDefinition("5xxErrorRate", "Average", "Percent"),
             MetricDefinition("CacheHitRate", "Average", "Percent"),
-            MetricDefinition("OriginLatency", "Average", "Seconds"),
+            MetricDefinition("OriginLatency", "Average", "Milliseconds"),
         ]
 
     def discover_resources(self) -> list[Resource]:
