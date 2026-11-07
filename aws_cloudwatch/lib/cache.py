@@ -6,7 +6,6 @@ This module provides file-based caching for CloudWatch data
 and tracking of API request counts.
 """
 
-import fcntl
 import json
 import os
 import threading
@@ -68,7 +67,7 @@ class DataCache:
     ) -> dict[str, Any] | None:
         """Load cached data if valid.
 
-        Uses file locking to prevent race conditions with concurrent access.
+        Writers replace the file atomically (see save()), so no lock is needed.
         TTL validation is based on timestamp stored in the cached data.
         Config key validation ensures cache is invalidated when configuration changes.
 
@@ -93,12 +92,11 @@ class DataCache:
 
         try:
             with open(path, "r", encoding="utf-8") as file:
-                # Acquire shared lock for reading (allows concurrent reads)
-                fcntl.flock(file.fileno(), fcntl.LOCK_SH)
-                try:
-                    data = json.load(file)
-                finally:
-                    fcntl.flock(file.fileno(), fcntl.LOCK_UN)
+                data = json.load(file)
+
+                if not isinstance(data, dict):
+                    logger.debug("Cache for key '%s' is not a JSON object, ignored", key)
+                    return None
 
                 # Validate TTL using stored timestamp
                 cached_at = data.get("_cached_at", 0)
@@ -117,7 +115,7 @@ class DataCache:
                     return None
 
                 return data
-        except (json.JSONDecodeError, OSError) as err:
+        except (ValueError, OSError) as err:
             logger.debug("Failed to load cache for '%s': %s", key, err)
             return None
 

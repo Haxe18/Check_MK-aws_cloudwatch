@@ -10,7 +10,7 @@ import json
 from calendar import monthrange
 from collections.abc import Generator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from cmk.agent_based.v2 import AgentSection, CheckPlugin, Metric, Result, Service, State
@@ -31,7 +31,7 @@ class APICounterCalculation:
     force_over_limit: bool
     warn_threshold: int
     crit_threshold: int
-    days_remaining: int
+    days_remaining: float
     checks_per_hour: float
     calls_per_day: int
     remaining_calls: int
@@ -315,15 +315,18 @@ def _build_counter_calculation(
                     _as_float(value, default=0.0),
                 )
 
-    # Calculate remaining days in month
-    today = datetime.utcnow()
-    days_in_month = monthrange(today.year, today.month)[1]
-    days_remaining = days_in_month - today.day
+    # Calculate remaining days in month, including the rest of today
+    now = datetime.now(timezone.utc)
+    days_in_month = monthrange(now.year, now.month)[1]
+    month_end = datetime(now.year, now.month, days_in_month, tzinfo=timezone.utc) + timedelta(
+        days=1
+    )
+    days_remaining = (month_end - now).total_seconds() / 86400
 
     # Calculate daily API calls
     checks_per_hour = 3600.0 / cache_ttl
     calls_per_day = int(round(calls_per_check * checks_per_hour * 24))
-    remaining_calls = days_remaining * calls_per_day
+    remaining_calls = int(round(days_remaining * calls_per_day))
     forecast = aws_total + remaining_calls
     forecast_percentage = (forecast / free_tier_limit) * 100
 
@@ -395,7 +398,7 @@ def _build_counter_result(calc: APICounterCalculation) -> Result:
 
     details = "Calculation:\n"
     details += f"  Currently consumed:     {_fmt(calc.aws_total)} (from AWS)\n"
-    details += f"  Remaining days:         {calc.days_remaining}\n"
+    details += f"  Remaining days:         {calc.days_remaining:.1f}\n"
     details += (
         f"  Weighted calls/check:   {calls_per_check_display} "
         f"({calc.services_count} services x {metrics_per_service_display} metrics)\n"
@@ -428,7 +431,7 @@ def _build_counter_result(calc: APICounterCalculation) -> Result:
             ttl_value = int(entry.get("refresh_ttl", calc.cache_ttl))
             details += (
                 f"    - {service_name}: {weighted} "
-                f"(ttl={ttl_value}s, factor={ratio}, base_calls={base_calls})\n"
+                f"(interval={ttl_value}s, factor={ratio}, base_calls={base_calls})\n"
             )
         overridden_total_display = str(round(calc.weighted_calls_per_check_overridden_total))
         default_total_display = str(round(calc.weighted_calls_per_check_default_total))
@@ -451,7 +454,7 @@ def _build_counter_result(calc: APICounterCalculation) -> Result:
         f"x 24 = {_fmt(calc.calls_per_day)}\n"
     )
     details += (
-        f"  Expected remaining:     {calc.days_remaining} x {_fmt(calc.calls_per_day)} "
+        f"  Expected remaining:     {calc.days_remaining:.1f} x {_fmt(calc.calls_per_day)} "
         f"= {_fmt(calc.remaining_calls)}\n"
     )
     details += "  ─────────────────────────────────────────────\n"

@@ -13,7 +13,6 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
 
 from .logger import get_logger
 
@@ -323,7 +322,12 @@ class FreeTierClient:
         Uses pagination to handle accounts with many free tier offerings.
 
         Returns:
-            Tuple of (actual_usage, forecasted_usage) or (0, 0) if unavailable
+            Tuple of (actual_usage, forecasted_usage) or (0, 0) if the response has
+            no CloudWatch entry or cannot be parsed
+
+        Raises:
+            BotoCoreError, ClientError: The Free Tier API call failed (the caller
+                reports it, since limit protection is inactive without this data)
         """
         try:
             paginator = self._client.get_paginator("get_free_tier_usage")
@@ -336,8 +340,6 @@ class FreeTierClient:
                         actual = int(float(entry.get("actualUsageAmount", 0)))
                         forecast = int(float(entry.get("forecastedUsageAmount", 0)))
                         return actual, forecast
-        except (BotoCoreError, ClientError) as err:
-            logger.warning("FreeTier API error: %s", err)
         except (TypeError, ValueError) as err:
             logger.warning("Error parsing FreeTier response: %s", err)
 

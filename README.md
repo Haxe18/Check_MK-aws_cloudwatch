@@ -8,16 +8,16 @@ Monitors CloudWatch metrics using the cost-free GetMetricStatistics API (1M requ
 ## Features
 
 - **100% Free Tier**: Uses only GetMetricStatistics API (1M requests/month free) - no costs
-- **Data Collection Only**: No default thresholds - all services report OK by default
+- **Data Collection First**: No default thresholds; only a few clear failure signs alert without a rule (see [Alerting](#alerting--thresholds))
 - **Optional Alerting**: Configure warning/critical levels per service type via WATO rules
 - **Multi-Region Support**: Monitor resources across multiple AWS regions simultaneously
-- **11 AWS Services**: CloudFront, RDS, EBS, ELB, ALB, NLB, Lambda, Lambda Insights, EC2, S3, DynamoDB
+- **12 AWS Services**: CloudFront, CloudFront Functions, RDS, EBS, ELB, ALB, NLB, Lambda, Lambda Insights, EC2, S3, DynamoDB
 - **API Usage Tracking**: Monthly forecast with per-service breakdown; Free Tier API failure surfaced as visible warning
 - **Automatic Discovery**: Discovers resources automatically via list_metrics()
 - **Smart Filtering**: Automatically filters out deleted resources (EC2, RDS, CloudFront Functions) to save API calls; Lambda/Lambda@Edge only when enabled (see [security note](#required-iam-permissions))
 - **Error Reporting**: Aggregates and displays API errors with IAM permission hints
 - **Smart Caching**: Config-aware cache invalidation when settings change
-- **Idle Skipping**: Lambda metrics, DynamoDB latency and ALB/NLB target health without data in the past 3 hours (idle or deleted functions, idle operations, deleted target groups) are reported as 0 without a GetMetricStatistics call; one extra ListMetrics call (`RecentlyActive=PT3H`) per refresh decides which ones
+- **Idle Skipping**: Lambda and Lambda Insights metrics, DynamoDB latency and ALB/NLB target health without data in the past 3 hours (idle or deleted functions, idle operations, deleted target groups) are reported as 0 without a GetMetricStatistics call; one extra ListMetrics call (`RecentlyActive=PT3H`) per refresh decides which ones
 
 ## Supported Services
 
@@ -38,14 +38,26 @@ All metrics are collected using the **free** GetMetricStatistics API.
 | **NLB** | ActiveFlows, ProcessedBytes, HealthyTargets | Any region |
 | **S3** | BucketSizeBytes, NumberOfObjects | Any region |
 
+The table names the main metrics. Every metric the agent fetches is checked: the main ones appear in the service summary, the others (e.g. RDS swap usage, ALB TLS errors, NLB per-protocol flows, Lambda async events) in the service details and as graphs, without thresholds.
+
 ## Alerting / Thresholds
 
-By default, this plugin **only collects metrics** - no alerts are triggered.
+By default, this plugin **collects metrics** and applies no warning or critical levels.
 
 ### Default Behavior
-- All services report **OK** status
 - Metrics are collected and graphed in Checkmk
 - No warning or critical thresholds are applied
+- A few clear failure signs alert without any rule (fixed, not configurable):
+
+| Service | Condition | State |
+|---------|-----------|-------|
+| EC2 | Status check failed (combined, instance or system) | CRIT |
+| DynamoDB | System errors > 0 | CRIT |
+| ALB / ELB Classic | Any 5XX (load balancer or target/backend) | WARN |
+| ALB / ELB Classic | More than 10 4XX (load balancer or target/backend) | WARN |
+| NLB | More than 100 client, target or NLB resets | WARN |
+
+- Metrics with a lower level (RDS free storage/memory, CloudFront cache hit rate, EBS burst balance, EC2 CPU credit balance) show "no data" instead of 0 when CloudWatch has no datapoint (e.g. a stopped RDS instance), so they do not alert falsely
 
 ### Configuring Alerts
 To enable alerting, configure thresholds via WATO rules:
@@ -63,7 +75,7 @@ To enable alerting, configure thresholds via WATO rules:
    - AWS CloudWatch NLB
    - AWS CloudWatch CloudFront
    - AWS CloudWatch CloudFront Functions
-3. Create a rule and configure warning/critical levels for the metrics you want to alert on
+3. Create a rule and configure warning/critical levels for the metrics you want to alert on. A rule can be limited to single resources with the service item ("region resource", e.g. `eu-central-1 mydb`)
 
 **Example**: Alert when RDS CPU > 80% (warn) / 90% (crit):
 - Create rule for "AWS CloudWatch RDS"
@@ -126,13 +138,14 @@ Therefore this call is off by default. Enable **"CloudFront: Fetch description a
 
 ## Configuration
 
-1. Go to **Setup → Agents → VM, Cloud, Container → Amazon CloudWatch Monitoring**
+1. Go to **Setup → Agents → VM, Cloud, Container → Amazon Web Services (AWS) CloudWatch**
 2. Configure:
    - AWS Access Key ID
    - AWS Secret Access Key
    - **Regions**: Add multiple regions, each with its own service selection
    - Cache TTL (default: 300s per region)
      - Note: S3 metrics are forced to 24h interval (independent of this global TTL)
+   - Resource Discovery Cache TTL (default: 3600s): how often resources are looked up via ListMetrics
    - API Warning Threshold (default: 80%)
    - API Critical Threshold (default: 90%)
    - **Free Tier Limit (1M requests/month)**: Stop or continue when limit reached
@@ -143,7 +156,7 @@ Therefore this call is off by default. Enable **"CloudFront: Fetch description a
 
 ## Services Discovered
 
-- **CloudWatch {region} {SERVICE} {resource} - {metric}**: One per CloudWatch metric
+- **{Service} {region} {resource}**: One per resource with all its metrics, e.g. `RDS eu-central-1 mydb`, `ALB eu-central-1 web` (prefixes: CloudFront, CloudFront Functions, Lambda, DynamoDB, RDS, EC2, EBS, ELB, ALB, NLB, S3)
 - **CloudWatch API Status**: Monthly API forecast with calculation details, including weighted calls/check breakdown per service and TTL group totals with service names
 
 ## Installation
@@ -154,14 +167,21 @@ Therefore this call is off by default. Enable **"CloudFront: Fetch description a
 
 ### Via Command Line
 ```bash
-mkp install aws_cloudwatch-1.0.0.mkp
+mkp add aws_cloudwatch-1.0.0.mkp
+mkp enable aws_cloudwatch 1.0.0
 ```
 
 ## Build & Release
 
 ### Local Build
+Needs the [Check_MK-plugin_mpk_action](https://github.com/Haxe18/Check_MK-plugin_mpk_action) repository checked out next to this one:
+
 ```bash
-./build_aws_cloudwatch.sh [version]
+../Check_MK-plugin_mpk_action/scripts/build_plugin.sh \
+  --plugin-name aws_cloudwatch \
+  --title "AWS CloudWatch Monitoring" \
+  --description "Checkmk plugin for monitoring AWS CloudWatch metrics" \
+  --version 1.0.0
 ```
 
 ### GitHub Release
@@ -250,12 +270,12 @@ aws_cloudwatch/
 │   ├── aws_cloudwatch_helpers.py         # Factory pattern + shared helpers
 │   ├── aws_cloudwatch_ec2.py             # EC2 checks (uses factory)
 │   ├── aws_cloudwatch_rds.py             # RDS checks (uses factory)
-│   └── aws_cloudwatch_*.py               # Other service checks (10 total)
+│   └── aws_cloudwatch_*.py               # Other service checks (11 total)
 ├── rulesets/                             # WATO configuration forms
 │   ├── aws_cloudwatch.py                 # Main agent rule
 │   ├── aws_cloudwatch_helpers.py         # Form spec helpers
 │   ├── ruleset_generator.py              # Factory for generating rulesets
-│   └── aws_cloudwatch_*.py               # Service threshold rules (10 total)
+│   └── aws_cloudwatch_*.py               # Service threshold rules (11 total)
 ├── lib/                                  # Core library modules
 │   ├── base.py                           # Abstract base section class
 │   ├── client.py                         # AWS API client wrappers
@@ -273,7 +293,7 @@ aws_cloudwatch/
 │       └── ...
 ├── graphing/aws_cloudwatch.py            # Metrics/graphs definitions
 ├── server_side_calls/special_agent_...   # WATO → CLI mapping
-└── checkman/aws_cloudwatch               # Service documentation
+└── checkman/aws_cloudwatch_*             # Service documentation (one per check)
 ```
 
 ## Testing

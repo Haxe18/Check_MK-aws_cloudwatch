@@ -29,10 +29,26 @@ from .types import Resource
 
 logger = get_logger("orchestrator")
 
+# Part of every cache config key. Bump it when the cached data changes shape
+# (e.g. a new Resource field), so caches written by an older version are dropped.
+CACHE_FORMAT_VERSION = 3
+
 # Service-specific metrics cache TTL overrides (seconds)
 SERVICE_METRICS_TTL_OVERRIDES: dict[str, int] = {
     "s3": 24 * 3600,
 }
+
+# A metrics fetch with errors is retried after this time (at the latest when its
+# cache expires), not after every check: an error that stays (e.g. access denied for
+# one S3 bucket) would otherwise refetch everything every few minutes
+METRICS_ERROR_RETRY_SECONDS = 3600
+
+# Metrics are refreshed already this many seconds before their TTL ends (at most
+# half the TTL). The agent runs at fixed intervals with some jitter: without it, the
+# run exactly one TTL after the last fetch still finds a valid cache and the refresh
+# slips to the next run (TTL 300s, agent every 60s: every 360s), while the query
+# window stays one TTL long, so the time in between is never queried
+METRICS_REFRESH_GRACE_SECONDS = 30
 
 
 @dataclass
@@ -144,6 +160,18 @@ class CloudWatchOrchestrator:
         profile_hash = CloudWatchClient.get_profile_hash(access_key)
         return Path(var_dir) / "agent_aws_cloudwatch" / f"{profile_hash}_{region}"
 
+    def _service_config_key(self, service_name: str) -> str:
+        """Build the cache config key of one service from its name and enabled options.
+
+        Cache files are per service, so other services in the region must not be
+        part of the key. Toggling an option drops the service's caches right away.
+        """
+        config_key = f"v{CACHE_FORMAT_VERSION}:{service_name}"
+        for option, enabled in self._section_options.get(service_name, {}).items():
+            if enabled:
+                config_key += f";{service_name}.{option}"
+        return config_key
+
     def _load_known_resources(
         self, regions_services_map: dict[str, list[str]]
     ) -> dict[str, list[str]]:
@@ -206,6 +234,30 @@ class CloudWatchOrchestrator:
                 )
             return 0, 0
 
+    @staticmethod
+    def _refresh_interval(
+        metrics_ttl: int, previous_window_end: float | None, window_end: float
+    ) -> int:
+        """Return the measured time between two metrics fetches, for the API forecast.
+
+        Args:
+            metrics_ttl: Metrics cache TTL of the service in seconds
+            previous_window_end: Unix time the previous fetch started at, or None
+                without a previous fetch
+            window_end: Unix time this fetch started at
+
+        Returns:
+            Seconds between the two fetches, rounded to full minutes, if that is
+            between one and two TTLs (agent interval that does not divide the TTL);
+            else the TTL (first fetch, forced refresh, pause of the agent)
+        """
+        if previous_window_end is None:
+            return metrics_ttl
+        elapsed = window_end - previous_window_end
+        if elapsed <= metrics_ttl or elapsed > 2 * metrics_ttl:
+            return metrics_ttl
+        return max(metrics_ttl, round(elapsed / 60) * 60)
+
     def _process_service(self, task: ServiceTask) -> dict[str, Any] | None:
         """Process a single service for a region.
 
@@ -226,6 +278,9 @@ class CloudWatchOrchestrator:
         section_class = SECTION_REGISTRY.get(service_name)
         if not section_class:
             logger.warning("Unknown service '%s', skipping", service_name)
+            task.error_collector.add(
+                "discovery", service_name, region, f"Unknown service '{service_name}', skipped"
+            )
             return None
 
         logger.debug(
@@ -243,6 +298,14 @@ class CloudWatchOrchestrator:
 
         if not section.can_run_in_region(region):
             logger.warning("%s cannot run in %s, skipping", service_name, region)
+            allowed_regions = ", ".join(section.region_constraints or [])
+            task.error_collector.add(
+                "discovery",
+                service_name,
+                region,
+                f"{section.title} is only available in {allowed_regions}, "
+                f"not monitored in {region}",
+            )
             return None
 
         service_metrics_ttl = SERVICE_METRICS_TTL_OVERRIDES.get(service_name, self._cache_ttl)
@@ -258,6 +321,7 @@ class CloudWatchOrchestrator:
         task.phase = "discovery"
         discovery_key = service_name
         resources: list[Resource] | None = None
+        discovery_failed = False
 
         if self._force_refresh:
             cached_discovery = None
@@ -300,7 +364,6 @@ class CloudWatchOrchestrator:
                     discovery_key,
                     {
                         "resources": [r.to_dict() for r in resources],
-                        "timestamp": int(time.time()),
                         "discovery_errors": discovery_errors,
                     },
                     config_key=task.config_key,
@@ -323,6 +386,7 @@ class CloudWatchOrchestrator:
                     exc_info=True,
                 )
                 resources = []
+                discovery_failed = True
 
         # Collect resource metadata (e.g., CloudFront comment/URL)
         service_metadata: dict[str, Any] = {}
@@ -338,25 +402,57 @@ class CloudWatchOrchestrator:
         )
         metrics_key = service_name
 
+        error_retry_ttl = max(self._cache_ttl, METRICS_ERROR_RETRY_SECONDS)
         if self._force_refresh:
             cached_metrics = None
             logger.debug("Force refresh: skipping metrics cache for '%s'", service_name)
         else:
             cached_metrics = metrics_cache.load(metrics_key, config_key=task.config_key)
+            # A fetch with errors is retried sooner instead of keeping the gap for the
+            # service's own TTL (S3: 24h)
+            if (
+                cached_metrics
+                and cached_metrics.get("metrics_errors")
+                and time.time() - cached_metrics.get("_cached_at", 0) > error_retry_ttl
+            ):
+                logger.debug("Retrying metrics for '%s': last fetch had errors", service_name)
+                cached_metrics = None
+            # Refresh shortly before the TTL ends (see METRICS_REFRESH_GRACE_SECONDS),
+            # counted from the start of the last fetch, however long it took
+            refresh_grace = min(METRICS_REFRESH_GRACE_SECONDS, service_metrics_ttl // 2)
+            if cached_metrics and (
+                time.time()
+                - cached_metrics.get("window_end", cached_metrics.get("_cached_at", 0))
+                > service_metrics_ttl - refresh_grace
+            ):
+                logger.debug("Metrics cache for '%s' ends within this run", service_name)
+                cached_metrics = None
 
         refresh_api_calls = 0.0
+        # How often the metrics are fetched, for the forecast
+        refresh_ttl = service_metrics_ttl
 
         if cached_metrics and "metrics" in cached_metrics:
             metrics_data = cached_metrics["metrics"]
             cached_api_calls = cached_metrics.get("api_calls", 0)
+            # Calls of the last refresh: used for the forecast only, not made by this run
             refresh_api_calls = float(cached_api_calls)
-            service_region_requests += cached_api_calls
+            # Re-add errors that occurred while fetching these metrics
+            task.error_collector.merge_from_list(cached_metrics.get("metrics_errors", []))
+            # The interval measured at the last refresh (TTL plus one agent interval)
+            refresh_ttl = cached_metrics.get("refresh_interval", service_metrics_ttl)
+            if cached_metrics.get("metrics_errors"):
+                refresh_ttl = min(refresh_ttl, error_retry_ttl)
             logger.debug(
                 "Using cached metrics for '%s' (%d metrics, %d cached API calls)",
                 service_name,
                 len(metrics_data),
                 cached_api_calls,
             )
+        elif discovery_failed:
+            # Nothing to fetch; an empty cache would hide the service until it expires
+            logger.debug("Skipping metrics for '%s': discovery failed", service_name)
+            metrics_data = []
         else:
             logger.debug(
                 "Fetching fresh metrics for '%s' (%d resources)",
@@ -364,14 +460,27 @@ class CloudWatchOrchestrator:
                 len(resources),
             )
             calls_before = task.api_counter.get_count()
+            errors_before = len(task.error_collector.to_list())
+            window_end = time.time()
+            # The expired cache tells when the previous fetch ran: the real time
+            # between two fetches, not the TTL, decides the forecast
+            previous_metrics = metrics_cache.load(
+                metrics_key, config_key=task.config_key, ignore_ttl=True
+            )
+            refresh_ttl = self._refresh_interval(
+                service_metrics_ttl,
+                (previous_metrics or {}).get("window_end"),
+                window_end,
+            )
             try:
-                results = section.fetch_all_metrics(
-                    resources,
-                    period=service_metrics_ttl,
-                )
+                results = section.fetch_all_metrics(resources, period=service_metrics_ttl)
                 api_calls = task.api_counter.get_count() - calls_before
                 refresh_api_calls = float(api_calls)
                 service_region_requests += api_calls
+                # Errors of single metric fetches (collected, not raised)
+                metrics_errors = task.error_collector.to_list()[errors_before:]
+                if metrics_errors:
+                    refresh_ttl = min(refresh_ttl, error_retry_ttl)
 
                 metrics_data = [m.to_dict() for m in results]
                 metrics_cache.save(
@@ -379,7 +488,9 @@ class CloudWatchOrchestrator:
                     {
                         "metrics": metrics_data,
                         "api_calls": api_calls,
-                        "timestamp": int(time.time()),
+                        "metrics_errors": metrics_errors,
+                        "window_end": window_end,
+                        "refresh_interval": refresh_ttl,
                     },
                     config_key=task.config_key,
                 )
@@ -428,7 +539,10 @@ class CloudWatchOrchestrator:
             "region_requests": service_region_requests,
             "refresh_api_calls": refresh_api_calls,
             "service_metrics_ttl": service_metrics_ttl,
-            "is_empty": not resources,
+            # Retried fetches after errors run more often than the service TTL
+            "refresh_ttl": refresh_ttl,
+            # A failed discovery says nothing about resources; its error is shown instead
+            "is_empty": not resources and not discovery_failed,
             "section_title": section.title,
         }
 
@@ -563,12 +677,6 @@ class CloudWatchOrchestrator:
                 region_plans.append((region, [], (str(err), hint)))
                 continue
 
-            config_key = ",".join(sorted(services))
-            # Toggling a service option must drop the cached discovery right away
-            for service_name in sorted(services):
-                for option, enabled in self._section_options.get(service_name, {}).items():
-                    if enabled:
-                        config_key += f";{service_name}.{option}"
             cache_dir = self._get_cache_dir(region)
             logger.debug("Cache dir: %s", cache_dir)
             logger.debug(
@@ -582,7 +690,7 @@ class CloudWatchOrchestrator:
                     service_name=service_name,
                     client=client,
                     cache_dir=cache_dir,
-                    config_key=config_key,
+                    config_key=self._service_config_key(service_name),
                 )
                 for service_name in services
             ]
@@ -634,11 +742,10 @@ class CloudWatchOrchestrator:
                 # Weighted API calls calculation
                 service_name = service_result["service_name"]
                 service_metrics_ttl = service_result["service_metrics_ttl"]
+                refresh_ttl = service_result["refresh_ttl"]
                 refresh_api_calls = service_result["refresh_api_calls"]
 
-                refresh_ratio = (
-                    self._cache_ttl / service_metrics_ttl if service_metrics_ttl > 0 else 1.0
-                )
+                refresh_ratio = self._cache_ttl / refresh_ttl if refresh_ttl > 0 else 1.0
                 refresh_ratio = max(0.0, min(1.0, refresh_ratio))
                 weighted_calls = refresh_api_calls * refresh_ratio
                 estimated_calls_per_check += weighted_calls
@@ -646,16 +753,28 @@ class CloudWatchOrchestrator:
                 service_breakdown = weighted_calls_per_check_by_service.get(
                     service_name,
                     {
-                        "refresh_ttl": float(service_metrics_ttl),
+                        "refresh_ttl": float(refresh_ttl),
                         "refresh_ratio": refresh_ratio,
                         "last_refresh_api_calls": 0.0,
                         "weighted_calls_per_check": 0.0,
                     },
                 )
-                service_breakdown["refresh_ttl"] = float(service_metrics_ttl)
-                service_breakdown["refresh_ratio"] = refresh_ratio
                 service_breakdown["last_refresh_api_calls"] += refresh_api_calls
                 service_breakdown["weighted_calls_per_check"] += weighted_calls
+                # Regions of a service can refresh at different rates (one retrying
+                # after errors): show the combined rate, so weighted = calls x ratio
+                base_calls = service_breakdown["last_refresh_api_calls"]
+                if base_calls > 0:
+                    combined_ratio = service_breakdown["weighted_calls_per_check"] / base_calls
+                    service_breakdown["refresh_ratio"] = combined_ratio
+                    service_breakdown["refresh_ttl"] = (
+                        self._cache_ttl / combined_ratio
+                        if combined_ratio > 0
+                        else float(refresh_ttl)
+                    )
+                else:
+                    service_breakdown["refresh_ratio"] = refresh_ratio
+                    service_breakdown["refresh_ttl"] = float(refresh_ttl)
                 weighted_calls_per_check_by_service[service_name] = service_breakdown
 
                 if service_metrics_ttl != self._cache_ttl:

@@ -112,11 +112,14 @@ def _agent_arguments(
         )
 
     # CloudWatch API thresholds
-    if params.get("cloudwatch_api_warn"):
-        args.extend(["--cloudwatch-api-warn", str(int(params.get("cloudwatch_api_warn")))])
+    # "is not None": 0 is a valid threshold
+    api_warn = params.get("cloudwatch_api_warn")
+    if api_warn is not None:
+        args.extend(["--cloudwatch-api-warn", str(int(api_warn))])
 
-    if params.get("cloudwatch_api_crit"):
-        args.extend(["--cloudwatch-api-crit", str(int(params.get("cloudwatch_api_crit")))])
+    api_crit = params.get("cloudwatch_api_crit")
+    if api_crit is not None:
+        args.extend(["--cloudwatch-api-crit", str(int(api_crit))])
 
     # Free tier limit behavior
     limit_behavior = params.get("cloudwatch_stop_at_limit")
