@@ -95,6 +95,24 @@ CLOUDFRONT_INFO_METRICS = [
 ]
 
 
+def _metadata_fetch_enabled(section: dict[str, Any]) -> bool:
+    """Whether the agent fetched CloudFront metadata (ListDistributions).
+
+    Older agents did not report the option and always fetched; treat a
+    missing value as enabled.
+    """
+    api_config = section.get("CloudWatchAPIConfig", {})
+    if not isinstance(api_config, dict):
+        return True
+    options = api_config.get("section_options", {})
+    if not isinstance(options, dict):
+        return True
+    cloudfront_options = options.get("cloudfront", {})
+    if not isinstance(cloudfront_options, dict):
+        return True
+    return bool(cloudfront_options.get("fetch_metadata", True))
+
+
 def _cloudfront_pre_hook(
     _metrics_found: dict[str, dict[str, Any]],
     params: dict[str, Any],
@@ -106,6 +124,16 @@ def _cloudfront_pre_hook(
     show_desc = params.get("show_description", False)
     show_url = params.get("show_url", False)
     if not show_desc and not show_url:
+        return
+
+    if not _metadata_fetch_enabled(section):
+        yield Result(
+            state=State.OK,
+            notice=(
+                "Description/URL not available: enable 'CloudFront: Fetch description "
+                "and URL' in the special agent rule (needs cloudfront:ListDistributions)"
+            ),
+        )
         return
 
     parts = item.split(" ", 1)

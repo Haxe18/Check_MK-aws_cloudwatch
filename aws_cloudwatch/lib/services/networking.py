@@ -58,7 +58,42 @@ class ELBSection(CloudWatchSection):
         ]
 
 
-class ELBv2ApplicationSection(CloudWatchSection):
+class _ELBv2Section(CloudWatchSection):
+    """Shared base for ALB and NLB (AWS/ApplicationELB, AWS/NetworkELB).
+
+    The LoadBalancer dimension has the format "app/name/hash" or "net/name/hash";
+    the resource ID is the middle part (the load balancer name).
+    """
+
+    @property
+    def dimension_key(self) -> str:
+        return "LoadBalancer"
+
+    def _extract_resource(self, metric_info: dict) -> Resource | None:
+        """Extract the load balancer from metric dimensions."""
+        dimensions = metric_info.get("Dimensions", [])
+        load_balancer = None
+
+        for dim in dimensions:
+            if dim["Name"] == "LoadBalancer":
+                load_balancer = dim["Value"]
+                break
+
+        if not load_balancer:
+            return None
+
+        # Extract friendly name from "app/my-alb/hash" or "net/my-nlb/hash"
+        parts = load_balancer.split("/")
+        friendly_name = parts[1] if len(parts) >= 2 else load_balancer
+
+        return Resource(
+            id=friendly_name,
+            dimensions={"LoadBalancer": load_balancer},
+            available_metrics=[],
+        )
+
+
+class ELBv2ApplicationSection(_ELBv2Section):
     """Application Load Balancer (ALB) metrics.
 
     Monitors requests, connections, response times, and HTTP codes.
@@ -76,10 +111,6 @@ class ELBv2ApplicationSection(CloudWatchSection):
     @property
     def namespace(self) -> str:
         return "AWS/ApplicationELB"
-
-    @property
-    def dimension_key(self) -> str:
-        return "LoadBalancer"
 
     @property
     def metrics(self) -> list[MetricDefinition]:
@@ -117,35 +148,8 @@ class ELBv2ApplicationSection(CloudWatchSection):
             MetricDefinition("TargetTLSNegotiationErrorCount", "Sum", "Count"),
         ]
 
-    def _extract_resource(self, metric_info: dict) -> Resource | None:
-        """Extract ALB from metric dimensions.
 
-        ALB LoadBalancer dimension format: "app/my-alb/50dc6c495c0c9188"
-        We extract a friendly name from this format.
-        """
-        dimensions = metric_info.get("Dimensions", [])
-        load_balancer = None
-
-        for dim in dimensions:
-            if dim["Name"] == "LoadBalancer":
-                load_balancer = dim["Value"]
-                break
-
-        if not load_balancer:
-            return None
-
-        # Extract friendly name from "app/my-alb/hash" format
-        parts = load_balancer.split("/")
-        friendly_name = parts[1] if len(parts) >= 2 else load_balancer
-
-        return Resource(
-            id=friendly_name,
-            dimensions={"LoadBalancer": load_balancer},
-            available_metrics=[],
-        )
-
-
-class ELBv2NetworkSection(CloudWatchSection):
+class ELBv2NetworkSection(_ELBv2Section):
     """Network Load Balancer (NLB) metrics.
 
     Monitors flows, connections, bytes, and TCP resets.
@@ -163,10 +167,6 @@ class ELBv2NetworkSection(CloudWatchSection):
     @property
     def namespace(self) -> str:
         return "AWS/NetworkELB"
-
-    @property
-    def dimension_key(self) -> str:
-        return "LoadBalancer"
 
     @property
     def metrics(self) -> list[MetricDefinition]:
@@ -198,30 +198,3 @@ class ELBv2NetworkSection(CloudWatchSection):
             MetricDefinition("HealthyHostCount", "Average", "Count"),
             MetricDefinition("UnHealthyHostCount", "Average", "Count"),
         ]
-
-    def _extract_resource(self, metric_info: dict) -> Resource | None:
-        """Extract NLB from metric dimensions.
-
-        NLB LoadBalancer dimension format: "net/my-nlb/50dc6c495c0c9188"
-        We extract a friendly name from this format.
-        """
-        dimensions = metric_info.get("Dimensions", [])
-        load_balancer = None
-
-        for dim in dimensions:
-            if dim["Name"] == "LoadBalancer":
-                load_balancer = dim["Value"]
-                break
-
-        if not load_balancer:
-            return None
-
-        # Extract friendly name from "net/my-nlb/hash" format
-        parts = load_balancer.split("/")
-        friendly_name = parts[1] if len(parts) >= 2 else load_balancer
-
-        return Resource(
-            id=friendly_name,
-            dimensions={"LoadBalancer": load_balancer},
-            available_metrics=[],
-        )

@@ -74,6 +74,8 @@ class CloudWatchOrchestrator:
         force_over_limit: bool = False,
         force_refresh: bool = False,
         max_workers: int = 1,
+        lambda_filter_deleted: bool = False,
+        cloudfront_metadata: bool = False,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -88,6 +90,10 @@ class CloudWatchOrchestrator:
             force_refresh: Ignore all caches and fetch fresh data from AWS API
             max_workers: Maximum number of parallel threads (1 = sequential; the agent
                 passes min(4, 2 x CPUs) when nothing is configured)
+            lambda_filter_deleted: Check discovered Lambda functions against the Lambda
+                API (lambda:ListFunctions, which also returns their environment variables)
+            cloudfront_metadata: Fetch CloudFront distribution comment/URL via
+                ListDistributions (its response also carries origin custom headers)
         """
         # Store credentials for passing to clients (not as instance variables for security)
         # These are only used to create boto3 clients, not stored longer than necessary
@@ -112,6 +118,12 @@ class CloudWatchOrchestrator:
         self._force_refresh = force_refresh
 
         self._max_workers = max(1, int(max_workers))
+        # Opt-in options per service, passed to the section constructor
+        # (AWS calls whose responses carry secrets stay off by default)
+        self._section_options: dict[str, dict[str, bool]] = {
+            "aws_lambda": {"filter_deleted": lambda_filter_deleted},
+            "cloudfront": {"fetch_metadata": cloudfront_metadata},
+        }
         self._api_counter = APICounter()
         self._error_collector = ErrorCollector()
 
@@ -222,7 +234,12 @@ class CloudWatchOrchestrator:
             section_class.__name__,
         )
 
-        section = section_class(task.client, task.api_counter, task.error_collector)
+        section = section_class(
+            task.client,
+            task.api_counter,
+            task.error_collector,
+            **self._section_options.get(service_name, {}),
+        )
 
         if not section.can_run_in_region(region):
             logger.warning("%s cannot run in %s, skipping", service_name, region)
@@ -510,6 +527,7 @@ class CloudWatchOrchestrator:
                     "warning_threshold": self._api_warn,
                     "critical_threshold": self._api_crit,
                     "force_over_limit": self._force_over_limit,
+                    "section_options": self._section_options,
                 },
             }
 
@@ -546,6 +564,11 @@ class CloudWatchOrchestrator:
                 continue
 
             config_key = ",".join(sorted(services))
+            # Toggling a service option must drop the cached discovery right away
+            for service_name in sorted(services):
+                for option, enabled in self._section_options.get(service_name, {}).items():
+                    if enabled:
+                        config_key += f";{service_name}.{option}"
             cache_dir = self._get_cache_dir(region)
             logger.debug("Cache dir: %s", cache_dir)
             logger.debug(
@@ -697,6 +720,7 @@ class CloudWatchOrchestrator:
                 "warning_threshold": self._api_warn,
                 "critical_threshold": self._api_crit,
                 "force_over_limit": self._force_over_limit,
+                "section_options": self._section_options,
             },
             "CloudWatchErrors": self._error_collector.to_list(),
             "CloudWatchEmptyServices": empty_services,

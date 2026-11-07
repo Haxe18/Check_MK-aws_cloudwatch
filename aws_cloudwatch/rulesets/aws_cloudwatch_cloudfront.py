@@ -59,7 +59,8 @@ _CLOUDFRONT_EXTRA_ELEMENTS = {
         parameter_form=BooleanChoice(
             label=Label("Show Comment from AWS as description"),
             help_text=Help(
-                "Show the CloudFront distribution's Comment field as description in the service summary."
+                "Show the CloudFront distribution's Comment field as description in the service summary. "
+                "Requires 'CloudFront: Fetch description and URL' in the special agent rule."
             ),
             prefill=DefaultValue(False),
         ),
@@ -70,7 +71,8 @@ _CLOUDFRONT_EXTRA_ELEMENTS = {
             label=Label("Show URL from AWS (alias or CloudFront domain)"),
             help_text=Help(
                 "Show the distribution's URL (first alias/CNAME, fallback to CloudFront domain) "
-                "as a clickable link in the service summary."
+                "as a clickable link in the service summary. "
+                "Requires 'CloudFront: Fetch description and URL' in the special agent rule."
             ),
             prefill=DefaultValue(False),
         ),

@@ -104,13 +104,15 @@ class CloudWatchClient:
         """Get the region this client is configured for."""
         return self._region
 
-    def list_metrics(self, namespace: str) -> dict[str, Any]:
+    def list_metrics(self, namespace: str, recently_active: bool = False) -> dict[str, Any]:
         """List metrics in a CloudWatch namespace with pagination.
 
         Uses paginator to handle namespaces with >500 metrics.
 
         Args:
             namespace: CloudWatch namespace (e.g., "AWS/EC2")
+            recently_active: Only metrics with data points in the past 3 hours
+                (RecentlyActive=PT3H); otherwise the past 2 weeks
 
         Returns:
             Response dictionary containing 'Metrics' list (all pages combined)
@@ -119,8 +121,11 @@ class CloudWatchClient:
         all_metrics: list[dict[str, Any]] = []
         page_count = 0
         paginator = self._client.get_paginator("list_metrics")
+        paginate_args: dict[str, str] = {"Namespace": namespace}
+        if recently_active:
+            paginate_args["RecentlyActive"] = "PT3H"
 
-        for page in paginator.paginate(Namespace=namespace):
+        for page in paginator.paginate(**paginate_args):
             page_count += 1
             all_metrics.extend(page.get("Metrics", []))
 

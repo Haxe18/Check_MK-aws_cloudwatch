@@ -7,6 +7,7 @@ service sections must implement.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -187,6 +188,67 @@ class CloudWatchSection(ABC):
                     available_metrics=[],
                 )
         return None
+
+    def _filter_to_existing(
+        self,
+        resources: list[Resource],
+        list_existing: Callable[[], list[str]],
+        hint_key: str,
+        kind: str,
+        resource_key: Callable[[Resource], str] | None = None,
+    ) -> list[Resource]:
+        """Keep only resources whose key is returned by list_existing.
+
+        On an AWS error the error is collected (with IAM hint) and all resources
+        are returned unfiltered.
+
+        Args:
+            resources: Resources discovered via ListMetrics
+            list_existing: Client call returning the IDs that still exist
+            hint_key: Key for get_permission_hint (e.g. "list_ec2")
+            kind: Plural noun for log lines (e.g. "EC2 instances")
+            resource_key: Maps a resource to the ID compared against list_existing
+                (default: resource.id)
+
+        Returns:
+            Filtered resources, or all resources if listing failed
+        """
+        try:
+            existing = set(list_existing())
+        except (BotoCoreError, ClientError) as err:
+            hint = get_permission_hint(err, hint_key)
+            if self._error_collector:
+                self._error_collector.add(
+                    "discovery", self.name, self._client.region, str(err), hint
+                )
+            hint_msg = f" (Required: {hint})" if hint else ""
+            logger.warning(
+                "[%s] Failed to list %s for filtering: %s%s. "
+                "Returning all discovered resources.",
+                self.name,
+                kind,
+                err,
+                hint_msg,
+            )
+            return resources
+
+        filtered_resources = []
+        for resource in resources:
+            key = resource_key(resource) if resource_key else resource.id
+            if key in existing:
+                filtered_resources.append(resource)
+            else:
+                logger.debug("[%s] Filtering out deleted %s: %s", self.name, kind, resource.id)
+
+        logger.info(
+            "[%s] Filtered %d deleted %s (Active: %d, Total: %d)",
+            self.name,
+            len(resources) - len(filtered_resources),
+            kind,
+            len(filtered_resources),
+            len(resources),
+        )
+        return filtered_resources
 
     def metric_query_window(self, default_period: int) -> tuple[int, int]:
         """Return lookback window and query period for metric requests.

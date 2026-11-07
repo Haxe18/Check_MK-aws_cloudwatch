@@ -20,6 +20,10 @@ Options:
     --force-refresh             Ignore all caches and fetch fresh data from AWS API
     --max-workers               Maximum number of parallel threads
                                 (default: min(4, 2 x CPUs of this machine), 1 = sequential)
+    --lambda-filter-deleted     Hide deleted Lambda functions via the Lambda API
+                                (needs lambda:ListFunctions, exposes env vars; default: off)
+    --cloudfront-metadata       Fetch CloudFront description/URL via ListDistributions
+                                (exposes origin custom headers; default: off)
 """
 
 import argparse
@@ -29,6 +33,9 @@ import sys
 from pathlib import Path
 
 import setproctitle
+
+# Hide the secret key from the process list, before the slow boto3 imports
+setproctitle.setproctitle("aws_cloudwatch_agent")
 
 # Add the lib directory to the Python path for imports
 # This handles both development and installed (MKP) scenarios
@@ -133,6 +140,26 @@ def parse_arguments() -> argparse.Namespace:
             "(default: min(4, 2 x CPUs of this machine), 1 = sequential fallback)"
         ),
     )
+    parser.add_argument(
+        "--lambda-filter-deleted",
+        action="store_true",
+        default=False,
+        help=(
+            "Hide deleted Lambda functions by checking them against the Lambda API.\n"
+            "Needs lambda:ListFunctions. WARNING: that call returns the environment\n"
+            "variables of all functions in clear text. Default: off"
+        ),
+    )
+    parser.add_argument(
+        "--cloudfront-metadata",
+        action="store_true",
+        default=False,
+        help=(
+            "Fetch CloudFront distribution description/URL via ListDistributions.\n"
+            "Needs cloudfront:ListDistributions. WARNING: that call also returns origin\n"
+            "custom headers (often used as shared secrets) in clear text. Default: off"
+        ),
+    )
 
     return parser.parse_args()
 
@@ -160,9 +187,6 @@ def output_section(result: dict) -> None:
 def main() -> None:
     """Main entry point for the AWS CloudWatch special agent."""
     args = parse_arguments()
-
-    # Hide secret key from process list
-    setproctitle.setproctitle("aws_cloudwatch_agent")
 
     # Parse regions-services map
     try:
@@ -204,6 +228,8 @@ def main() -> None:
             max_workers=(
                 args.max_workers if args.max_workers is not None else default_max_workers()
             ),
+            lambda_filter_deleted=args.lambda_filter_deleted,
+            cloudfront_metadata=args.cloudfront_metadata,
         )
 
         result = orchestrator.run(regions_services_map)

@@ -14,9 +14,10 @@ Monitors CloudWatch metrics using the cost-free GetMetricStatistics API (1M requ
 - **11 AWS Services**: CloudFront, RDS, EBS, ELB, ALB, NLB, Lambda, Lambda Insights, EC2, S3, DynamoDB
 - **API Usage Tracking**: Monthly forecast with per-service breakdown; Free Tier API failure surfaced as visible warning
 - **Automatic Discovery**: Discovers resources automatically via list_metrics()
-- **Smart Filtering**: Automatically filters out deleted resources (Lambda, Lambda@Edge, EC2, RDS, CloudFront Functions) to save API calls
+- **Smart Filtering**: Automatically filters out deleted resources (EC2, RDS, CloudFront Functions) to save API calls; Lambda/Lambda@Edge only when enabled (see [security note](#required-iam-permissions))
 - **Error Reporting**: Aggregates and displays API errors with IAM permission hints
 - **Smart Caching**: Config-aware cache invalidation when settings change
+- **Idle Lambda Skipping**: Lambda metrics without data in the past 3 hours (idle or deleted functions) are reported as 0 without a GetMetricStatistics call; one extra ListMetrics call (`RecentlyActive=PT3H`) per refresh decides which ones
 
 ## Supported Services
 
@@ -81,7 +82,6 @@ To enable alerting, configure thresholds via WATO rules:
                 "cloudwatch:GetMetricStatistics",
                 "cloudwatch:ListMetrics",
                 "freetier:GetFreeTierUsage",
-                "lambda:ListFunctions",
                 "cloudfront:ListFunctions",
                 "ec2:DescribeInstances",
                 "rds:DescribeDBInstances"
@@ -103,13 +103,26 @@ To enable alerting, configure thresholds via WATO rules:
 | `cloudwatch:GetMetricStatistics` | Fetch metrics (free tier API) |
 | `cloudwatch:ListMetrics` | Discover resources |
 | `freetier:GetFreeTierUsage` | Show actual AWS API usage in the "CloudWatch API Status" check |
-| `lambda:ListFunctions` | Smart Filtering – remove deleted Lambda & Lambda@Edge functions |
+| `lambda:ListFunctions` | **Not in the policy above, only if needed.** Only for the opt-in WATO option "Lambda: Hide deleted functions immediately" – see security note below |
 | `cloudfront:ListFunctions` | Smart Filtering – remove deleted CloudFront Functions |
+| `cloudfront:ListDistributions` | **Not in the policy above, only if needed.** Only for the opt-in WATO option "CloudFront: Fetch description and URL" (shows comment and URL/alias in the service summary) – see security note below |
 | `ec2:DescribeInstances` | Smart Filtering – remove terminated EC2 instances |
 | `rds:DescribeDBInstances` | Smart Filtering – remove deleted RDS instances |
 | `cloudwatch:GetMetricData` (Deny) | Block the expensive paid API (not used by this plugin) |
 
-**Note**: Smart Filtering permissions (`lambda:ListFunctions`, `cloudfront:ListFunctions`, `ec2:DescribeInstances`, `rds:DescribeDBInstances`) are optional – without them the plugin still works but deleted resources may remain visible until the discovery cache expires. Missing permissions are reported as WARN in the "CloudWatch API Status" check with the required permission name.
+**Note**: Smart Filtering permissions (`cloudfront:ListFunctions`, `ec2:DescribeInstances`, `rds:DescribeDBInstances`) are optional – without them the plugin still works but deleted resources may remain visible until the discovery cache expires. Missing permissions are reported as WARN in the "CloudWatch API Status" check with the required permission name.
+
+**Security note – `lambda:ListFunctions`**: The Lambda API has no way to list only function names. `ListFunctions` always returns the full configuration of every function, including **the environment variables in clear text** (database connection strings, API tokens, …); in CloudTrail this shows up as a KMS `Decrypt` by `lambda.amazonaws.com`. Anyone holding the monitoring key with this permission can read every Lambda secret. Therefore the plugin does **not** call the Lambda API by default: deleted functions disappear once CloudWatch stops listing their metrics (up to 2 weeks after their last data point); until then their services stay visible and show 0 values (without costing API calls, see Troubleshooting). If you want deleted functions hidden right away, enable **"Lambda: Hide deleted functions immediately"** in the rule and add `lambda:ListFunctions` to the policy – knowingly accepting the exposure. The plugin itself only uses the function names.
+
+**Security note – `cloudfront:ListDistributions`**: The plugin only keeps the comment, domain name and aliases of each distribution. The AWS response, however, always contains the full origin configuration, including **origin custom headers with their values in clear text**. If you protect your origins with a secret header (e.g. `X-Origin-Verify`), anyone holding the monitoring key can read that value. Check whether this applies to you:
+
+```bash
+aws cloudfront list-distributions --query "DistributionList.Items[].Origins.Items[].CustomHeaders"
+```
+
+If secret headers show up and you don't want the monitoring key to see them, keep the option off and leave out `cloudfront:ListDistributions` – the services then show only the distribution ID.
+
+Therefore this call is off by default. Enable **"CloudFront: Fetch description and URL"** in the special agent rule only if you want the "Show Comment from AWS" / "Show URL from AWS" options of the CloudFront service rule to work.
 
 ## Configuration
 
@@ -125,6 +138,8 @@ To enable alerting, configure thresholds via WATO rules:
    - **Free Tier Limit (1M requests/month)**: Stop or continue when limit reached
      - When stopped, service checks show OK "monitoring paused" instead of UNKNOWN
    - Parallel Threads (range 1–10): How many region/service pairs are fetched at the same time; 1 = one after another. If not set: min(4, 2 × CPUs of the machine running the agent)
+   - **Lambda: Hide deleted functions immediately** (default: off): checks Lambda functions against the Lambda API; needs `lambda:ListFunctions`, which exposes all Lambda environment variables (see [security note](#required-iam-permissions))
+   - **CloudFront: Fetch description and URL** (default: off): needed for "Show Comment" / "Show URL" in the CloudFront service rule; needs `cloudfront:ListDistributions`, which also returns origin custom headers (see [security note](#required-iam-permissions))
 
 ## Services Discovered
 
@@ -284,7 +299,7 @@ Accepted values: `1`, `true`, `yes` (case-insensitive).
 | `aws_cloudwatch.client` | client.py | FreeTier API errors |
 | `aws_cloudwatch.compute` | services/compute.py | EC2 filtering |
 | `aws_cloudwatch.database` | services/database.py | RDS filtering |
-| `aws_cloudwatch.serverless` | services/serverless.py | Lambda filtering |
+| `aws_cloudwatch.serverless` | services/serverless.py | Lambda filtering (opt-in) |
 | `aws_cloudwatch.cloudfront` | services/cloudfront.py | CloudFront filtering |
 
 ## Troubleshooting
@@ -297,10 +312,16 @@ Accepted values: `1`, `true`, `yes` (case-insensitive).
 ### CloudFront Not Working
 - CloudFront and CloudFront Functions **must** use us-east-1 (AWS requirement)
 - Smart Filtering for CloudFront Functions requires `cloudfront:ListFunctions` IAM permission – without it, deleted functions remain visible
+- "Show Comment" / "Show URL" show nothing (the service details then say so): enable "CloudFront: Fetch description and URL" in the special agent rule and grant `cloudfront:ListDistributions` (read the security note first)
 
 ### Lambda@Edge Not Showing
 - Lambda@Edge metrics appear in the **creation region** (e.g., eu-central-1), not us-east-1
 - Use `aws_lambda` service (not cloudfront_functions)
+
+### Deleted Lambda Function Still Shown
+- By default the plugin does not query the Lambda API (security), so deleted functions stay until CloudWatch stops listing their metrics (up to 2 weeks)
+- To hide them immediately, enable "Lambda: Hide deleted functions immediately" and grant `lambda:ListFunctions` (read the security note first)
+- Until then they cost no API calls: metrics without data in the past 3 hours are reported as 0 without being fetched
 
 ### API Usage Too High
 - Increase cache TTL (300s → 600s)

@@ -58,6 +58,10 @@ def _agent_arguments(
             - cloudwatch_api_warn: Warning threshold percentage
             - cloudwatch_api_crit: Critical threshold percentage
             - cloudwatch_max_workers: Parallel threads (optional, 1-10)
+            - cloudwatch_lambda_filter_deleted: Check Lambda functions against the
+              Lambda API (optional, off by default)
+            - cloudwatch_cloudfront_metadata: Fetch CloudFront description/URL
+              (optional, off by default)
         host_config: Host configuration object (unused).
 
     Yields:
@@ -125,6 +129,14 @@ def _agent_arguments(
     max_workers = params.get("cloudwatch_max_workers")
     if max_workers is not None:
         args.extend(["--max-workers", str(int(max_workers))])
+
+    # Lambda: hide deleted functions via Lambda API (exposes env vars, opt-in)
+    if params.get("cloudwatch_lambda_filter_deleted"):
+        args.append("--lambda-filter-deleted")
+
+    # CloudFront: description/URL via ListDistributions (exposes origin headers, opt-in)
+    if params.get("cloudwatch_cloudfront_metadata"):
+        args.append("--cloudfront-metadata")
 
     yield SpecialAgentCommand(command_arguments=args)
 

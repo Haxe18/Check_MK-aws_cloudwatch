@@ -68,8 +68,12 @@ aws_cloudwatch/
 - Parallel collection (`lib/orchestrator.py`, `ServiceTask`): one thread pool over all region/service pairs (`--max-workers`, 1–10 in WATO; if unset, the agent uses min(4, 2 × CPUs); 1 = sequential); each task has its own `APICounter`/`ErrorCollector`, merged in config order afterwards so output is deterministic
 - Service definitions in `lib/services/` with `SECTION_REGISTRY` dict and region constraints
 - API counter tracks usage against 1M free tier via AWS FreeTier API (with per-service breakdown); Free Tier API failures surfaced as visible WARN via ErrorCollector
-- Config-key based cache invalidation (cache auto-invalidates when services change)
-- **Smart Filtering:** Validates discovered resources against AWS APIs (Lambda, Lambda@Edge, CloudFront Functions, EC2, RDS) to remove deleted items
+- Config-key based cache invalidation (cache auto-invalidates when services or a per-service opt-in option change)
+- **Smart Filtering:** Validates discovered resources against AWS APIs (CloudFront Functions, EC2, RDS) to remove deleted items
+- **Per-service opt-in options:** `CloudWatchOrchestrator._section_options` maps service name -> constructor kwargs of its section; enabled options are appended to the cache config_key and reported as `CloudWatchAPIConfig.section_options` (the CloudFront check uses it to explain missing description/URL)
+- **CloudFront metadata is opt-in** (`--cloudfront-metadata`, WATO `cloudwatch_cloudfront_metadata`, default off): `ListDistributions` also returns origin custom headers in clear text (`CloudFrontSection.fetch_metadata`); the check-level "Show Comment/URL" options depend on it
+- **Lambda filtering is opt-in** (`--lambda-filter-deleted`, WATO `cloudwatch_lambda_filter_deleted`, default off): `lambda:ListFunctions` returns all function env vars in clear text, so the Lambda API is not called unless enabled (`LambdaSection.filter_deleted`). Never add AWS calls whose response carries secrets without making them opt-in
+- **Idle Lambda skipping:** `LambdaSection.fetch_all_metrics()` first calls ListMetrics with `RecentlyActive=PT3H` (`CloudWatchClient.list_metrics(recently_active=True)`); `fetch_metric()` returns 0 without an API call for (function, metric) pairs not in that set. On error, or when the lookback (metrics cache TTL) exceeds 3h, it fetches everything. Lambda only: S3 publishes daily and would look idle
 - Error collection via `lib/errors.py` (ErrorCollector class)
 - IAM permission hints via `lib/iam_hints.py` (shows required permissions on access errors)
 

@@ -7,12 +7,19 @@ This module provides CloudWatch monitoring for:
 - CloudFront Functions
 """
 
+from typing import TYPE_CHECKING
+
 from botocore.exceptions import BotoCoreError, ClientError
 
 from ..base import CloudWatchSection
+from ..errors import ErrorCollector
 from ..iam_hints import get_permission_hint
 from ..logger import get_logger
 from ..types import MetricDefinition, Resource
+
+if TYPE_CHECKING:
+    from ..cache import APICounter
+    from ..client import CloudWatchClient
 
 logger = get_logger("cloudfront")
 
@@ -23,6 +30,25 @@ class CloudFrontSection(CloudWatchSection):
     CloudFront metrics are only available in us-east-1 and require
     the Region="Global" dimension.
     """
+
+    def __init__(
+        self,
+        client: "CloudWatchClient",
+        api_counter: "APICounter",
+        error_collector: ErrorCollector | None = None,
+        fetch_metadata: bool = False,
+    ) -> None:
+        """Initialize the section.
+
+        Args:
+            client: CloudWatch client for API calls
+            api_counter: Counter for tracking API usage
+            error_collector: Optional collector for surfacing errors into Checkmk output
+            fetch_metadata: Fetch comment/domain/aliases via ListDistributions. Off by
+                default: the response also carries origin custom headers in clear text.
+        """
+        super().__init__(client, api_counter, error_collector)
+        self._fetch_metadata = fetch_metadata
 
     @property
     def name(self) -> str:
@@ -58,9 +84,9 @@ class CloudFrontSection(CloudWatchSection):
         ]
 
     def discover_resources(self) -> list[Resource]:
-        """Discover CloudFront distributions and enrich with metadata."""
+        """Discover CloudFront distributions, optionally enriched with metadata."""
         resources = super().discover_resources()
-        if not resources:
+        if not resources or not self._fetch_metadata:
             return resources
 
         try:
@@ -152,46 +178,13 @@ class CloudFrontFunctionsSection(CloudWatchSection):
         if not resources:
             return resources
 
-        try:
-            active_functions = set(self._client.list_cloudfront_functions())
-
-            filtered_resources = []
-            for resource in resources:
-                # resource.id is always the plain function name
-                func_name = resource.id
-                if func_name in active_functions:
-                    filtered_resources.append(resource)
-                else:
-                    logger.debug(
-                        "[%s] Filtering out deleted CloudFront Function: %s",
-                        self.name,
-                        resource.id,
-                    )
-
-            logger.info(
-                "[%s] Filtered %d deleted functions (Active: %d, Total: %d)",
-                self.name,
-                len(resources) - len(filtered_resources),
-                len(filtered_resources),
-                len(resources),
-            )
-            return filtered_resources
-
-        except (BotoCoreError, ClientError) as err:
-            hint = get_permission_hint(err, "list_cloudfront_functions")
-            if self._error_collector:
-                self._error_collector.add(
-                    "discovery", self.name, self._client.region, str(err), hint
-                )
-            hint_msg = f" (Required: {hint})" if hint else ""
-            logger.warning(
-                "[%s] Failed to list CloudFront Functions: %s%s. "
-                "Returning all discovered metrics.",
-                self.name,
-                err,
-                hint_msg,
-            )
-            return resources
+        # resource.id is always the plain function name
+        return self._filter_to_existing(
+            resources,
+            self._client.list_cloudfront_functions,
+            "list_cloudfront_functions",
+            "CloudFront Functions",
+        )
 
     def _extract_resource(self, metric_info: dict) -> Resource | None:
         """Extract CloudFront Function from metric dimensions.

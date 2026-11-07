@@ -19,6 +19,7 @@ from cmk.plugins.aws.constants import (
 )
 from cmk.rulesets.v1 import Help, Label, Message, Title
 from cmk.rulesets.v1.form_specs import (
+    BooleanChoice,
     CascadingSingleChoice,
     CascadingSingleChoiceElement,
     DefaultValue,
@@ -320,6 +321,45 @@ def _valuespec_special_agents_aws_cloudwatch() -> Dictionary:
                     prefill=DefaultValue("stop"),
                 ),
                 required=False,
+            ),
+            "cloudwatch_lambda_filter_deleted": DictElement(
+                parameter_form=BooleanChoice(
+                    title=Title("Lambda: Hide deleted functions immediately"),
+                    label=Label("Check discovered Lambda functions against the Lambda API"),
+                    help_text=Help(
+                        "Off by default. Without this option, a deleted Lambda function disappears "
+                        "once CloudWatch stops listing its metrics (up to 2 weeks after its last "
+                        "data point); until then its services stay visible and show 0 values. "
+                        "When enabled, discovered functions (including Lambda@Edge) are checked "
+                        "against the Lambda API and deleted ones are hidden right away. "
+                        "This requires the IAM permission lambda:ListFunctions. "
+                        "WARNING: AWS returns the environment variables of all Lambda functions "
+                        "in clear text with this call (e.g. database connection strings, API "
+                        "tokens). Anyone holding the monitoring key can read them. The plugin "
+                        "itself only uses the function names and does not store anything else."
+                    ),
+                    prefill=DefaultValue(False),
+                ),
+                required=True,
+            ),
+            "cloudwatch_cloudfront_metadata": DictElement(
+                parameter_form=BooleanChoice(
+                    title=Title("CloudFront: Fetch description and URL"),
+                    label=Label("Fetch comment, domain and aliases of CloudFront distributions"),
+                    help_text=Help(
+                        "Off by default. Needed for the 'Show Comment' and 'Show URL' options "
+                        "of the CloudFront service rule; without it the service details show a "
+                        "note instead of comment and URL. "
+                        "Requires the IAM permission cloudfront:ListDistributions. "
+                        "WARNING: AWS returns the full origin configuration with this call, "
+                        "including origin custom headers in clear text. If you protect your "
+                        "origins with a secret header (e.g. X-Origin-Verify), anyone holding the "
+                        "monitoring key can read it. The plugin itself only keeps comment, "
+                        "domain and aliases."
+                    ),
+                    prefill=DefaultValue(False),
+                ),
+                required=True,
             ),
         },
     )

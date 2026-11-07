@@ -5,14 +5,8 @@
 This module provides CloudWatch monitoring for RDS instances.
 """
 
-from botocore.exceptions import BotoCoreError, ClientError
-
 from ..base import CloudWatchSection
-from ..iam_hints import get_permission_hint
-from ..logger import get_logger
 from ..types import MetricDefinition, Resource
-
-logger = get_logger("database")
 
 
 class RDSSection(CloudWatchSection):
@@ -90,41 +84,6 @@ class RDSSection(CloudWatchSection):
         if not resources:
             return resources
 
-        try:
-            active_instances = set(self._client.list_rds_instances())
-
-            filtered_resources = []
-            for resource in resources:
-                if resource.id in active_instances:
-                    filtered_resources.append(resource)
-                else:
-                    logger.debug(
-                        "[%s] Filtering out deleting/deleted instance: %s",
-                        self.name,
-                        resource.id,
-                    )
-
-            logger.info(
-                "[%s] Filtered %d deleted instances (Active: %d, Total: %d)",
-                self.name,
-                len(resources) - len(filtered_resources),
-                len(filtered_resources),
-                len(resources),
-            )
-            return filtered_resources
-
-        except (BotoCoreError, ClientError) as err:
-            hint = get_permission_hint(err, "list_rds")
-            if self._error_collector:
-                self._error_collector.add(
-                    "discovery", self.name, self._client.region, str(err), hint
-                )
-            hint_msg = f" (Required: {hint})" if hint else ""
-            logger.warning(
-                "[%s] Failed to list instances for filtering: %s%s. "
-                "Returning all discovered metrics.",
-                self.name,
-                err,
-                hint_msg,
-            )
-            return resources
+        return self._filter_to_existing(
+            resources, self._client.list_rds_instances, "list_rds", "RDS instances"
+        )
