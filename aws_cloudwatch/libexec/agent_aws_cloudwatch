@@ -11,7 +11,9 @@ Usage:
 
 Options:
     --access-key                AWS Access Key ID
-    --secret-key                AWS Secret Access Key
+    --secret-key                AWS Secret Access Key (visible in the process list, for manual tests)
+    --secret-key-reference      AWS Secret Access Key in the Checkmk password store,
+                                as '<password id>:<password store file>' (set by Checkmk)
     --cloudwatch-regions-map    JSON mapping of regions to services
     --cloudwatch-cache-ttl      Metrics cache TTL in seconds (default: 300)
     --cloudwatch-discovery-ttl  Resource discovery cache TTL in seconds (default: 3600)
@@ -34,7 +36,8 @@ from pathlib import Path
 
 import setproctitle
 
-# Hide the secret key from the process list, before the slow boto3 imports
+# Short process name, and hides a secret key passed with --secret-key (manual tests)
+# from the process list, before the slow boto3 imports
 setproctitle.setproctitle("aws_cloudwatch_agent")
 
 # Add the lib directory to the Python path for imports
@@ -84,10 +87,17 @@ def parse_arguments() -> argparse.Namespace:
         required=True,
         help="AWS Access Key ID",
     )
-    parser.add_argument(
+    secret_key_group = parser.add_mutually_exclusive_group(required=True)
+    secret_key_group.add_argument(
         "--secret-key",
-        required=True,
-        help="AWS Secret Access Key",
+        help="AWS Secret Access Key (visible in the process list, for manual tests)",
+    )
+    secret_key_group.add_argument(
+        "--secret-key-reference",
+        help=(
+            "AWS Secret Access Key in the Checkmk password store,\n"
+            "as '<password id>:<password store file>' (set by Checkmk)"
+        ),
     )
     parser.add_argument(
         "--cloudwatch-regions-map",
@@ -178,6 +188,25 @@ def default_max_workers() -> int:
     return min(4, 2 * cpu_count)
 
 
+def read_secret_key(secret_key_reference: str) -> str:
+    """Read the AWS secret key from the Checkmk password store.
+
+    Args:
+        secret_key_reference: '<password id>:<password store file>' as passed by Checkmk
+
+    Returns:
+        The AWS secret key
+
+    Raises:
+        ValueError: The reference has no ':' or the password id is not in the store
+    """
+    # Only available on a Checkmk site, so it is imported when needed
+    from cmk.utils.password_store import lookup  # pylint: disable=import-outside-toplevel
+
+    password_id, password_file = secret_key_reference.split(":", 1)
+    return lookup(Path(password_file), password_id)
+
+
 def output_section(result: dict) -> None:
     """Output result as Checkmk agent section."""
     print("<<<aws_cloudwatch:sep(0)>>>")
@@ -216,9 +245,14 @@ def main() -> None:
 
     # Create orchestrator and run
     try:
+        secret_key = (
+            args.secret_key
+            if args.secret_key is not None
+            else read_secret_key(args.secret_key_reference)
+        )
         orchestrator = CloudWatchOrchestrator(
             access_key=args.access_key,
-            secret_key=args.secret_key,
+            secret_key=secret_key,
             cache_ttl=args.cloudwatch_cache_ttl,
             discovery_ttl=args.cloudwatch_discovery_ttl,
             api_warn=args.cloudwatch_api_warn,

@@ -6,7 +6,7 @@ command-line arguments for the special agent executable. It bridges the
 gap between the web UI configuration and the agent invocation.
 
 The module handles:
-    - AWS credential mapping (access key, secret key via .unsafe())
+    - AWS credential mapping (access key, secret key as password store reference)
     - Multi-region service mapping
     - Cache TTL and threshold settings
 """
@@ -16,6 +16,7 @@ from collections.abc import Generator
 from typing import Any
 
 from cmk.server_side_calls.v1 import (
+    Secret,
     SpecialAgentCommand,
     SpecialAgentConfig,
     noop_parser,
@@ -69,17 +70,15 @@ def _agent_arguments(
 
     Example:
         WATO config produces arguments like:
-        --access-key AKIA... --secret-key <secret>
+        --access-key AKIA... --secret-key-reference <password id>:<password store file>
         --cloudwatch-regions-map '{"us-east-1": ["cloudfront"]}'
     """
-    secret = params.get("aws_secret_access_key")
-    secret_value = secret.unsafe() if hasattr(secret, "unsafe") else str(secret or "")
-
-    args: list[str] = [
+    # Passed as a password store reference, so the secret key is not in the process list
+    args: list[str | Secret] = [
         "--access-key",
         str(params.get("aws_access_key_id", "")),
-        "--secret-key",
-        secret_value,
+        "--secret-key-reference",
+        params["aws_secret_access_key"],
     ]
 
     # Multi-region configuration

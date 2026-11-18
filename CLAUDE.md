@@ -112,4 +112,4 @@ aws_cloudwatch/
 - Use `cmk.rulesets.v1` for WATO forms
 - Use `cmk.agent_based.v2` for check plugins
 - Use `cmk.server_side_calls.v1` for parameter mapping
-- Password fields require `migrate_to_password` and `.unsafe()` for CLI args
+- Password fields require `migrate_to_password`; pass the `Secret` itself (not `.unsafe()`) so Checkmk hands over `<password id>:<password store file>` instead of the secret, and read it in the agent with `cmk.utils.password_store.lookup()` (`read_secret_key()` in `libexec/agent_aws_cloudwatch`). `--secret-key` with the plain key stays for manual tests
