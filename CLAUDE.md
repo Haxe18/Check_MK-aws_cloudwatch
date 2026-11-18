@@ -14,7 +14,8 @@ Checkmk plugin for monitoring AWS CloudWatch metrics using the free GetMetricSta
   --plugin-name aws_cloudwatch \
   --title "AWS CloudWatch Monitoring" \
   --description "Checkmk plugin for monitoring AWS CloudWatch metrics" \
-  --version 1.0.0
+  --version 1.0.0 \
+  --usable-until 3.0.0   # same as usable_until in .github/workflows/release_aws_cloudwatch.yml
 
 # Test agent locally (as site user: needs boto3, setproctitle and cmk from the site)
 ./aws_cloudwatch/libexec/agent_aws_cloudwatch \

@@ -167,28 +167,26 @@ Therefore this call is off by default. Enable **"CloudFront: Fetch description a
 
 ### Via Command Line
 ```bash
-mkp add aws_cloudwatch-1.0.0.mkp
-mkp enable aws_cloudwatch 1.0.0
+mkp add aws_cloudwatch-1.1.0.mkp
+mkp enable aws_cloudwatch 1.1.0
 ```
 
-## Build & Release
+## Build
 
 ### Local Build
-Needs the [Check_MK-plugin_mpk_action](https://github.com/Haxe18/Check_MK-plugin_mpk_action) repository checked out next to this one:
+Run in the repository root. The build script comes from
+[Check_MK-plugin_mpk_action](https://github.com/Haxe18/Check_MK-plugin_mpk_action), the same version the release workflow uses:
 
 ```bash
-../Check_MK-plugin_mpk_action/scripts/build_plugin.sh \
+curl -fsSL https://raw.githubusercontent.com/Haxe18/Check_MK-plugin_mpk_action/v1/scripts/build_plugin.sh | bash -s -- \
   --plugin-name aws_cloudwatch \
   --title "AWS CloudWatch Monitoring" \
   --description "Checkmk plugin for monitoring AWS CloudWatch metrics" \
-  --version 1.0.0
+  --version 1.1.0 \
+  --usable-until 3.0.0
 ```
 
-### GitHub Release
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+The package is disabled on upgrade to Checkmk 3.0: the WATO rule uses Checkmk's AWS region list (`cmk.plugins.aws.constants`), which Checkmk 3.0 moves and renames. The release workflow sets the same limit.
 
 ## Free Tier Protection
 

@@ -5,16 +5,23 @@ on:
     tags:
       - 'v*' # Trigger on tags like v1.0.0
 
-permissions:
-  contents: write
-
 jobs:
   release:
-    uses: haxe18/Check_MK-plugin_mpk_action/.github/workflows/reusable_release.yml@main
-    with:
-      plugin_name: "aws_cloudwatch"
-      title: "AWS CloudWatch Monitoring"
-      description: "Checkmk plugin for monitoring AWS CloudWatch metrics using the free GetMetricStatistics API."
-      tag_prefix: "v"
-      changelog_filter_path: "aws_cloudwatch/"
-    secrets: inherit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # all tags and commits, needed for the changelog
+
+      - uses: haxe18/Check_MK-plugin_mpk_action@v1
+        with:
+          plugin_name: "aws_cloudwatch"
+          title: "AWS CloudWatch Monitoring"
+          description: "Checkmk plugin for monitoring AWS CloudWatch metrics using the free GetMetricStatistics API."
+          tag_prefix: "v"
+          changelog_filter_path: "aws_cloudwatch/"
+          # The ruleset imports cmk.plugins.aws.constants.AWSRegions, which Checkmk
+          # 3.0 moved and renamed (aws_v2 / aws_deprecated, AWS_REGIONS)
+          usable_until: "3.0.0"
