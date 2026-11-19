@@ -568,7 +568,9 @@ def check_aws_cloudwatch_api_counter(
         return
 
     counter_data = section.get("CloudWatchAPICounter", {})
-    if isinstance(counter_data, dict) and _as_bool(counter_data.get("monitoring_stopped", False)):
+    if isinstance(counter_data, dict) and _as_bool(
+        counter_data.get("monitoring_stopped", False)
+    ):
         yield Result(
             state=State.CRIT,
             summary="Monitoring stopped: free tier limit reached, no API calls until next month",

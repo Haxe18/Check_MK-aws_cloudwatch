@@ -50,4 +50,3 @@ def get_permission_hint(error: ClientError | Exception, context: str) -> str | N
         return _PERMISSION_BY_CONTEXT.get(context)
 
     return None
-

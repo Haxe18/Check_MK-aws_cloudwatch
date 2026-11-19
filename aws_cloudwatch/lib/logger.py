@@ -20,7 +20,9 @@ if _DEBUG_ENABLED:
     _root_logger.setLevel(logging.DEBUG)
     _handler = logging.StreamHandler(sys.stderr)
     _handler.setFormatter(
-        logging.Formatter("%(asctime)s - %(name)s - [%(threadName)s] - %(levelname)s - %(message)s")
+        logging.Formatter(
+            "%(asctime)s - %(name)s - [%(threadName)s] - %(levelname)s - %(message)s"
+        )
     )
     _root_logger.addHandler(_handler)
 else:

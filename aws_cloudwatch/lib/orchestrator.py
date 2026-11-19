@@ -201,7 +201,9 @@ class CloudWatchOrchestrator:
                     continue
                 resource_ids: list[str] = []
                 for metric in cached_metrics["metrics"]:
-                    resource_id = metric.get("resource_id") if isinstance(metric, dict) else None
+                    resource_id = (
+                        metric.get("resource_id") if isinstance(metric, dict) else None
+                    )
                     if not isinstance(resource_id, str) or not resource_id:
                         continue
                     regionalized_id = f"{region}:{resource_id}"
@@ -348,7 +350,9 @@ class CloudWatchOrchestrator:
 
             if resources is not None:
                 # Re-add errors that occurred during the original discovery run
-                task.error_collector.merge_from_list(cached_discovery.get("discovery_errors", []))
+                task.error_collector.merge_from_list(
+                    cached_discovery.get("discovery_errors", [])
+                )
 
         if resources is None:
             logger.debug("Fetching fresh discovery for '%s'", service_name)

@@ -77,4 +77,6 @@ class ErrorCollector:
             errors: List of error dictionaries as returned by to_list()
         """
         for err in errors:
-            self.add(err["category"], err["service"], err["region"], err["message"], err.get("hint"))
+            self.add(
+                err["category"], err["service"], err["region"], err["message"], err.get("hint")
+            )

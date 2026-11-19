@@ -352,7 +352,9 @@ def _valuespec_special_agents_aws_cloudwatch() -> Dictionary:
             "cloudwatch_cloudfront_metadata": DictElement(
                 parameter_form=BooleanChoice(
                     title=Title("CloudFront: Fetch description and URL"),
-                    label=Label("Fetch comment, domain and aliases of CloudFront distributions"),
+                    label=Label(
+                        "Fetch comment, domain and aliases of CloudFront distributions"
+                    ),
                     help_text=Help(
                         "Off by default. Needed for the 'Show Comment' and 'Show URL' options "
                         "of the CloudFront service rule; without it the service details show a "
